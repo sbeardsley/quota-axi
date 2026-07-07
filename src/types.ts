@@ -16,6 +16,8 @@ export type ProviderStatus =
   | "rate_limited"
   | "error";
 
+export type ProviderStateReason = "keychain_access_required";
+
 export type QuotaWindow = {
   id: string;
   label: string;
@@ -33,6 +35,7 @@ export type SourceAttempt = {
   source: string;
   status: "success" | "failed" | "skipped";
   error?: string;
+  credentialPresent?: boolean;
 };
 
 export type ProviderQuota = {
@@ -57,6 +60,8 @@ export type ProviderQuota = {
     refreshedAt?: string;
     error?: string;
     retryAfter?: string;
+    reason?: ProviderStateReason;
+    remedyCommand?: string;
     sourcesTried: string[];
   };
   attempts?: SourceAttempt[];
@@ -64,8 +69,9 @@ export type ProviderQuota = {
 
 export type QuotaAxiResponse = {
   generatedAt: string;
-  schemaVersion: 1;
+  schemaVersion: 2;
   providers: ProviderQuota[];
+  help?: string[];
 };
 
 export type ProviderOptions = {
@@ -84,6 +90,7 @@ export type AuthSourceReport = {
   path?: string;
   status: "available" | "missing" | "invalid" | "expired" | "skipped";
   error?: string;
+  credentialPresent?: boolean;
 };
 
 export type AuthProviderReport = {

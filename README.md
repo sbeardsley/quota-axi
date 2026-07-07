@@ -24,6 +24,10 @@ It is data only: it never routes, recommends, proxies, intercepts, logs in, impo
 
 ## Quick Start
 
+**macOS + Claude note:** Claude Code keeps its live token in the macOS Keychain.
+quota-axi will not read that token unless the user grants permission, so Claude quota reads can stay stale until the user grants access after on-disk credentials expire.
+Run `quota-axi --allow-keychain-prompt` once and approve Keychain access with "Always Allow" so future non-interactive quota reads can refresh live Claude data.
+
 ```sh
 $ npx -y quota-axi
 bin: ~/.npm/_npx/.../quota-axi
@@ -52,7 +56,7 @@ help[3]:
 $ quota-axi --provider claude --json
 {
   "generatedAt": "2026-03-15T16:42:03.000Z",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "providers": [
     {
       "provider": "claude",
@@ -170,7 +174,7 @@ It is generated from `src/skill.ts`; update it with `pnpm run build:skill` and v
 ```
 
 - **Live first** - direct provider usage calls use 15 second request timeouts, Codex JSON-RPC reads use short per-call timeouts, and stale cache fallback is per provider.
-- **No default Keychain prompt** - macOS Claude Keychain reads are skipped unless `--allow-keychain-prompt` is passed.
+- **No default Keychain prompt** - macOS Claude Keychain value reads are skipped unless `--allow-keychain-prompt` is passed.
 - **Partial success is success** - one provider can fail while another returns fresh or stale data, and the process still exits 0. Exit code 1 means every provider failed, and 2 means a usage error.
 - **No token equivalence** - quota-axi does not claim that one provider percentage equals another provider percentage.
 
@@ -194,28 +198,33 @@ It is generated from `src/skill.ts`; update it with `pnpm run build:skill` and v
 
 ## Output Model
 
-`--json` emits `schemaVersion: 1`.
+`--json` emits `schemaVersion: 2`.
 Quota reports contain `providers`, each with `provider`, `label`, `source`, `windows`, `state`, optional `plan`, and optional `credits`.
 With `--full`, providers can also include `account` identity and per-source `attempts`.
-Provider `state` includes `status`, `stale`, `sourcesTried`, optional `refreshedAt`, optional `error`, and optional `retryAfter`.
+Provider `state` includes `status`, `stale`, `sourcesTried`, optional `refreshedAt`, optional `error`, optional `retryAfter`, optional `reason`, and optional `remedyCommand`.
+When stale or unavailable quota is likely fixable by a one-time macOS Keychain grant, `state.reason` is `keychain_access_required`, `state.remedyCommand` is `quota-axi --allow-keychain-prompt`, and JSON includes an agent-directed `help` entry.
+Default TOON output includes the same condition in an `advice` block with `provider`, `reason`, and `remedyCommand`, plus the agent-directed help line.
 Quota windows include `id`, `label`, `kind`, optional percentages, optional reset fields, optional `windowSeconds`, and optional credit-spend fields.
 Account identity and per-source `attempts` are omitted unless `--full` is passed.
 Provider statuses are `fresh`, `stale`, `unavailable`, `auth_required`, `rate_limited`, or `error`.
-Provider sources are `oauth`, `cli-rpc`, `api`, `web`, `cache`, or `unavailable`; v1 emits `oauth`, `cli-rpc`, `cache`, and `unavailable`.
+Provider sources are `oauth`, `cli-rpc`, `api`, `web`, `cache`, or `unavailable`; current provider adapters emit `oauth`, `cli-rpc`, `cache`, and `unavailable`.
 Window kinds are `session`, `weekly`, `monthly`, `model`, `credits`, or `unknown`.
 Source attempts use `success`, `failed`, or `skipped`.
+Source attempts can include `credentialPresent` when a non-secret probe confirms a credential item exists.
 Claude can report `five_hour`, `seven_day`, optional `seven_day_opus`, and optional `extra_usage` windows.
 When the account's usage response includes a scoped `limits` list, quota-axi surfaces every active window it describes instead, including model-scoped ones (e.g. Fable) as a `model:<slug>` window.
 Codex can report `five_hour` and `weekly` windows plus optional credit balance data, plus any additional model- or feature-scoped rate limits the account has as `model:<id>:5h` / `model:<id>:7d` windows, and an optional code-review rate limit as `code_review_five_hour` / `code_review_weekly`.
 `auth --json` emits `generatedAt`, `schemaVersion: 1`, and `auth`, where each provider report has `provider` and `sources`.
 Auth source entries include `source`, optional `path`, `status`, and optional `error`.
+Auth source entries can include `credentialPresent` when a non-secret probe confirms a credential item exists.
 Auth source statuses are `available`, `missing`, `invalid`, `expired`, or `skipped`.
 Auth source names are `oauth-file`, `keychain`, `auth-json`, and `cli-rpc`.
 
 ## Security Posture
 
 quota-axi reads `~/.claude/.credentials.json` for Claude.
-On macOS, it reads `Claude Code-credentials` from Keychain only with `--allow-keychain-prompt`; when enabled, the Keychain credential is tried before file credentials.
+On macOS, it reads the `Claude Code-credentials` Keychain value only with `--allow-keychain-prompt`; when enabled, the Keychain credential is tried before file credentials.
+Without that flag, quota-axi may perform a non-secret Keychain item presence check so it only suggests Keychain access when a Claude credential item exists.
 For Codex, it reads `$CODEX_HOME/auth.json` or `~/.codex/auth.json` before the read-only CLI fallback.
 Codex `auth.json` support is OAuth-token only; API key values such as `OPENAI_API_KEY` are treated as invalid for quota usage calls and are not sent to ChatGPT usage endpoints.
 It may run `codex -s read-only -a untrusted app-server` for Codex JSON-RPC fallback.
