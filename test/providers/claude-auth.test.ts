@@ -13,6 +13,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
   if (originalUserProfile === undefined) delete process.env.USERPROFILE;
@@ -38,7 +40,7 @@ describe("Claude credential-state reporting", () => {
     writeFileSync(
       join(home, ".claude", ".credentials.json"),
       JSON.stringify({
-        claudeAiOauth: { accessToken: "expired-token", expiresAt: 1 },
+        claudeAiOauth: { accessToken: "expired-token", expiresAt: 0 },
       }),
     );
 
@@ -47,6 +49,42 @@ describe("Claude credential-state reporting", () => {
 
     expect(result.state.status).toBe("auth_required");
     expect(result.state.error).toBe("Claude sign-in required");
+    expect(result.attempts).toContainEqual({
+      source: "oauth-file",
+      status: "skipped",
+      error: "credentials_expired",
+    });
+  });
+
+  it("surfaces expired ISO-string file credentials without probing usage", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2040-01-01T00:00:00.000Z"));
+    const home = useTempHome();
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(
+      join(home, ".claude", ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "expired-token",
+          expiresAt: "2035-01-01T00:00:00.000Z",
+        },
+      }),
+    );
+    const fetchMock = vi.fn(async () => new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchQuota, inspectAuth } =
+      await import("../../src/providers/claude.js");
+    const auth = await inspectAuth({ allowKeychainPrompt: false });
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(auth.sources[0]).toMatchObject({
+      source: "oauth-file",
+      path: join(home, ".claude", ".credentials.json"),
+      status: "expired",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.state.status).toBe("auth_required");
     expect(result.attempts).toContainEqual({
       source: "oauth-file",
       status: "skipped",

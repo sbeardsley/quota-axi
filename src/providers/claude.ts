@@ -315,9 +315,8 @@ function extractCredentialState(
     stringValue(oauth.accessToken) ?? stringValue(oauth.access_token);
   if (!accessToken)
     return { status: "invalid", source: { source, path, status: "invalid" } };
-  const expiresAt =
-    typeof oauth.expiresAt === "number" ? oauth.expiresAt : undefined;
-  if (expiresAt && expiresAt <= Date.now())
+  const expiresAt = expiresAtMillis(oauth.expiresAt);
+  if (expiresAt !== undefined && expiresAt <= Date.now())
     return { status: "expired", source: { source, path, status: "expired" } };
   const plan =
     stringValue(oauth.subscriptionType) ?? stringValue(data.subscriptionType);
@@ -419,6 +418,17 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function expiresAtMillis(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric)) return numeric;
+  const parsed = Date.parse(trimmed);
+  return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 function errorMessage(error: unknown): string {
