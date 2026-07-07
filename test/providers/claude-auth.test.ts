@@ -1,0 +1,160 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const originalHome = process.env.HOME;
+const originalUserProfile = process.env.USERPROFILE;
+const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+let tempDir: string | undefined;
+
+beforeEach(() => {
+  vi.resetModules();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
+  if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = originalUserProfile;
+  if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+  else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+  tempDir = undefined;
+});
+
+function useTempHome(): string {
+  tempDir = mkdtempSync(join(tmpdir(), "quota-axi-home-"));
+  process.env.HOME = tempDir;
+  process.env.USERPROFILE = tempDir;
+  process.env.XDG_CACHE_HOME = join(tempDir, "cache");
+  return tempDir;
+}
+
+describe("Claude credential-state reporting", () => {
+  it("surfaces expired file credentials as a skipped attempt and auth_required", async () => {
+    const home = useTempHome();
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(
+      join(home, ".claude", ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: { accessToken: "expired-token", expiresAt: 0 },
+      }),
+    );
+
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result.state.status).toBe("auth_required");
+    expect(result.state.error).toBe("Claude sign-in required");
+    expect(result.attempts).toContainEqual({
+      source: "oauth-file",
+      status: "skipped",
+      error: "credentials_expired",
+    });
+  });
+
+  it("surfaces expired ISO-string file credentials without probing usage", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2040-01-01T00:00:00.000Z"));
+    const home = useTempHome();
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(
+      join(home, ".claude", ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "expired-token",
+          expiresAt: "2035-01-01T00:00:00.000Z",
+        },
+      }),
+    );
+    const fetchMock = vi.fn(async () => new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchQuota, inspectAuth } =
+      await import("../../src/providers/claude.js");
+    const auth = await inspectAuth({ allowKeychainPrompt: false });
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(auth.sources[0]).toMatchObject({
+      source: "oauth-file",
+      path: join(home, ".claude", ".credentials.json"),
+      status: "expired",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.state.status).toBe("auth_required");
+    expect(result.attempts).toContainEqual({
+      source: "oauth-file",
+      status: "skipped",
+      error: "credentials_expired",
+    });
+  });
+
+  it("sends the Claude Code User-Agent when probing usage", async () => {
+    const home = useTempHome();
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(
+      join(home, ".claude", ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "fresh-token",
+          expiresAt: "2035-01-01T00:00:00.000Z",
+        },
+      }),
+    );
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ five_hour: { utilization: 12 } }), {
+          status: 200,
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result.state.status).toBe("fresh");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.anthropic.com/api/oauth/usage",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "User-Agent": expect.stringMatching(/^claude-code\/\d+\.\d+\.\d+/),
+          "Content-Type": "application/json",
+        }),
+      }),
+    );
+  });
+
+  it("surfaces missing file credentials as a skipped attempt and auth_required", async () => {
+    useTempHome();
+
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result.state.status).toBe("auth_required");
+    expect(result.state.error).toBe("Claude sign-in required");
+    expect(result.attempts).toContainEqual({
+      source: "oauth-file",
+      status: "skipped",
+      error: "credentials_missing",
+    });
+  });
+
+  it("surfaces malformed file credentials as invalid auth", async () => {
+    const home = useTempHome();
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(join(home, ".claude", ".credentials.json"), "{not-json");
+
+    const { inspectAuth } = await import("../../src/providers/claude.js");
+    const result = await inspectAuth({ allowKeychainPrompt: false });
+
+    expect(result.sources[0]).toMatchObject({
+      source: "oauth-file",
+      path: join(home, ".claude", ".credentials.json"),
+      status: "invalid",
+      error: "json_parse_error",
+    });
+  });
+});

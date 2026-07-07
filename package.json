@@ -1,0 +1,57 @@
+{
+  "name": "quota-axi",
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.1.1",
+  "description": "AXI CLI that reports local agent-provider quota windows without routing or mutation",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kunchenguid/quota-axi.git"
+  },
+  "keywords": [
+    "quota",
+    "cli",
+    "agent",
+    "axi",
+    "toon",
+    "claude",
+    "codex"
+  ],
+  "bin": {
+    "quota-axi": "./dist/bin/quota-axi.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "tsx bin/quota-axi.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@toon-format/toon": "2.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.0.0",
+    "prettier": "3.8.1",
+    "tsx": "4.0.0",
+    "typescript": "6.0.3",
+    "vitest": "3.0.0"
+  }
+}
