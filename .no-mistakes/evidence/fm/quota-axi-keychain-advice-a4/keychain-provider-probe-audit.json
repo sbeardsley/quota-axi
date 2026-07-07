@@ -13,16 +13,8 @@
       "credentialPresent": true
     },
     "securityCalls": [
-      [
-        "find-generic-password",
-        "-s",
-        "Claude Code-credentials"
-      ],
-      [
-        "find-generic-password",
-        "-s",
-        "Claude Code-credentials"
-      ]
+      ["find-generic-password", "-s", "Claude Code-credentials"],
+      ["find-generic-password", "-s", "Claude Code-credentials"]
     ],
     "requestedPasswordValue": false
   },
@@ -30,12 +22,7 @@
     "quotaStatus": "fresh",
     "quotaSource": "oauth",
     "securityCalls": [
-      [
-        "find-generic-password",
-        "-s",
-        "Claude Code-credentials",
-        "-w"
-      ]
+      ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
     ],
     "requestedPasswordValue": true
   }

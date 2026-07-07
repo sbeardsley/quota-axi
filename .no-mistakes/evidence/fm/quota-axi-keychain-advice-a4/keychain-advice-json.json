@@ -22,11 +22,7 @@
         "stale": true,
         "refreshedAt": "2026-07-07T16:00:00.000Z",
         "error": "Claude sign-in required",
-        "sourcesTried": [
-          "oauth-file",
-          "keychain",
-          "cache"
-        ],
+        "sourcesTried": ["oauth-file", "keychain", "cache"],
         "reason": "keychain_access_required",
         "remedyCommand": "quota-axi --allow-keychain-prompt"
       }
@@ -50,9 +46,7 @@
         "status": "fresh",
         "stale": false,
         "refreshedAt": "2026-07-07T16:10:00.000Z",
-        "sourcesTried": [
-          "cli-rpc"
-        ]
+        "sourcesTried": ["cli-rpc"]
       }
     }
   ],
