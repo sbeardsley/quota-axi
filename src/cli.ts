@@ -4,10 +4,22 @@ import { fileURLToPath } from "node:url";
 import { writeCachedProviders } from "./cache.js";
 import { nowIso } from "./lib/time.js";
 import { PROVIDERS, parseProviders } from "./providers/index.js";
-import { redactedResponse, renderAuthToon, renderError, renderQuotaToon } from "./render.js";
-import type { AuthProviderReport, ProviderId, ProviderOptions, ProviderQuota, QuotaAxiResponse } from "./types.js";
+import {
+  redactedResponse,
+  renderAuthToon,
+  renderError,
+  renderQuotaToon,
+} from "./render.js";
+import type {
+  AuthProviderReport,
+  ProviderId,
+  ProviderOptions,
+  ProviderQuota,
+  QuotaAxiResponse,
+} from "./types.js";
 
-export const DESCRIPTION = "Report local agent-provider quota windows for routing-aware agents.";
+export const DESCRIPTION =
+  "Report local agent-provider quota windows for routing-aware agents.";
 
 export const TOP_HELP = `usage: quota-axi [auth] [flags]
 commands[2]:
@@ -49,11 +61,15 @@ export async function main(options: MainOptions = {}): Promise<void> {
       stdout.write(`quota-axi ${readPackageVersion()}\n`);
       return;
     }
-    const providerOptions: ProviderOptions = { allowKeychainPrompt: parsed.allowKeychainPrompt };
+    const providerOptions: ProviderOptions = {
+      allowKeychainPrompt: parsed.allowKeychainPrompt,
+    };
     if (parsed.command === "auth") {
       const reports = await inspectAuth(parsed.providers, providerOptions);
       if (parsed.json) {
-        stdout.write(`${JSON.stringify({ generatedAt: nowIso(), schemaVersion: 1, auth: reports }, null, 2)}\n`);
+        stdout.write(
+          `${JSON.stringify({ generatedAt: nowIso(), schemaVersion: 1, auth: reports }, null, 2)}\n`,
+        );
       } else {
         stdout.write(`${renderAuthToon(reports, binPath)}\n`);
       }
@@ -61,20 +77,26 @@ export async function main(options: MainOptions = {}): Promise<void> {
     }
 
     const response = await fetchQuota(parsed.providers, providerOptions);
-    writeCachedProviders(response.providers);
     const rendered = parsed.json
       ? JSON.stringify(redactedResponse(response, parsed.full), null, 2)
-      : renderQuotaToon(redactedResponse(response, parsed.full), binPath, parsed.full);
+      : renderQuotaToon(
+          redactedResponse(response, parsed.full),
+          binPath,
+          parsed.full,
+        );
     stdout.write(`${rendered}\n`);
 
     if (response.providers.every((provider) => isFailed(provider))) {
       process.exitCode = 1;
     }
+    writeCachedProvidersBestEffort(response.providers);
   } catch (error) {
     stdout.write(
-      `${renderError(error instanceof Error ? error.message : "quota-axi failed", "usage", [
-        "Run `quota-axi --help` for supported commands and flags",
-      ])}\n`,
+      `${renderError(
+        error instanceof Error ? error.message : "quota-axi failed",
+        "usage",
+        ["Run `quota-axi --help` for supported commands and flags"],
+      )}\n`,
     );
     process.exitCode = 2;
   }
@@ -115,7 +137,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
     if (arg === "--provider") {
       const value = argv[index + 1];
-      if (!value) throw new Error("--provider requires a comma-separated provider list");
+      if (!value)
+        throw new Error("--provider requires a comma-separated provider list");
       providerValue = value;
       index++;
       continue;
@@ -136,8 +159,13 @@ export function parseArgs(argv: string[]): ParsedArgs {
   };
 }
 
-async function fetchQuota(providers: ProviderId[], options: ProviderOptions): Promise<QuotaAxiResponse> {
-  const results = await Promise.all(providers.map((provider) => PROVIDERS[provider].fetchQuota(options)));
+async function fetchQuota(
+  providers: ProviderId[],
+  options: ProviderOptions,
+): Promise<QuotaAxiResponse> {
+  const results = await Promise.all(
+    providers.map((provider) => PROVIDERS[provider].fetchQuota(options)),
+  );
   return {
     generatedAt: nowIso(),
     schemaVersion: 1,
@@ -145,20 +173,39 @@ async function fetchQuota(providers: ProviderId[], options: ProviderOptions): Pr
   };
 }
 
-async function inspectAuth(providers: ProviderId[], options: ProviderOptions): Promise<AuthProviderReport[]> {
-  return Promise.all(providers.map((provider) => PROVIDERS[provider].inspectAuth(options)));
+async function inspectAuth(
+  providers: ProviderId[],
+  options: ProviderOptions,
+): Promise<AuthProviderReport[]> {
+  return Promise.all(
+    providers.map((provider) => PROVIDERS[provider].inspectAuth(options)),
+  );
 }
 
 function isFailed(provider: ProviderQuota): boolean {
   return !["fresh", "stale"].includes(provider.state.status);
 }
 
+function writeCachedProvidersBestEffort(providers: ProviderQuota[]): void {
+  try {
+    writeCachedProviders(providers);
+  } catch {
+    return;
+  }
+}
+
 function readPackageVersion(): string {
   const here = dirname(fileURLToPath(import.meta.url));
-  for (const candidate of [join(here, "..", "package.json"), join(here, "..", "..", "package.json")]) {
+  for (const candidate of [
+    join(here, "..", "package.json"),
+    join(here, "..", "..", "package.json"),
+  ]) {
     if (!existsSync(candidate)) continue;
-    const parsed = JSON.parse(readFileSync(candidate, "utf-8")) as { version?: unknown };
-    if (typeof parsed.version === "string" && parsed.version.length > 0) return parsed.version;
+    const parsed = JSON.parse(readFileSync(candidate, "utf-8")) as {
+      version?: unknown;
+    };
+    if (typeof parsed.version === "string" && parsed.version.length > 0)
+      return parsed.version;
   }
   return "0.0.0";
 }
