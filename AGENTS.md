@@ -28,7 +28,9 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 pnpm install
 pnpm run build
 pnpm run lint
+pnpm run format:check
 pnpm test
+pnpm run build:skill -- --check
 ```
 
 ## Release process
