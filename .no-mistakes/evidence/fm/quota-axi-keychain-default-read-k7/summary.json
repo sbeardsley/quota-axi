@@ -36,10 +36,7 @@
     "find-generic-password -s Claude Code-credentials -w"
   ],
   "oauthFetches": 2,
-  "authorizationHeaderObservedAndRedacted": [
-    true,
-    true
-  ],
+  "authorizationHeaderObservedAndRedacted": [true, true],
   "tokenRenderedInCliOrCacheOutput": false,
   "markerPath": "./.no-mistakes/evidence/fm/quota-axi-keychain-default-read-k7/runtime/cache/quota-axi/claude-keychain-access-granted",
   "cachePath": "./.no-mistakes/evidence/fm/quota-axi-keychain-default-read-k7/runtime/cache/quota-axi/quotas.json"

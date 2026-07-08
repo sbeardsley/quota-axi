@@ -11,10 +11,7 @@
         "status": "auth_required",
         "stale": false,
         "error": "Claude sign-in required",
-        "sourcesTried": [
-          "oauth-file",
-          "keychain"
-        ],
+        "sourcesTried": ["oauth-file", "keychain"],
         "reason": "keychain_access_required",
         "remedyCommand": "quota-axi --allow-keychain-prompt"
       },

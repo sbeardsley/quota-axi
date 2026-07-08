@@ -5,11 +5,11 @@ The fake Keychain value contains a sentinel token, and the harness checks that t
 
 ## CLI flow
 
-| Step | Command | Exit | Provider status | Advice | Cache percent |
-| --- | --- | ---: | --- | --- | ---: |
-| 1 | `quota-axi --provider claude --json --full` | 1 | auth_required | keychain_access_required | n/a |
-| 2 | `quota-axi --provider claude --json --full --allow-keychain-prompt` | 0 | fresh | none | 12 |
-| 3 | `quota-axi --provider claude --json --full` | 0 | fresh | none | 7 |
+| Step | Command                                                             | Exit | Provider status | Advice                   | Cache percent |
+| ---- | ------------------------------------------------------------------- | ---: | --------------- | ------------------------ | ------------: |
+| 1    | `quota-axi --provider claude --json --full`                         |    1 | auth_required   | keychain_access_required |           n/a |
+| 2    | `quota-axi --provider claude --json --full --allow-keychain-prompt` |    0 | fresh           | none                     |            12 |
+| 3    | `quota-axi --provider claude --json --full`                         |    0 | fresh           | none                     |             7 |
 
 ## Security command calls
 

@@ -19,10 +19,7 @@
       "state": {
         "status": "fresh",
         "stale": false,
-        "sourcesTried": [
-          "oauth-file",
-          "oauth"
-        ],
+        "sourcesTried": ["oauth-file", "oauth"],
         "refreshedAt": "2026-07-08T01:25:14.480Z"
       }
     }

@@ -1,10 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const root = process.cwd();
-const evidenceDir = join(root, ".no-mistakes", "evidence", "fm", "quota-axi-keychain-default-read-k7");
+const evidenceDir = join(
+  root,
+  ".no-mistakes",
+  "evidence",
+  "fm",
+  "quota-axi-keychain-default-read-k7",
+);
 const runtimeDir = join(evidenceDir, "runtime");
 const fakeBin = join(runtimeDir, "bin");
 const fakeHome = join(runtimeDir, "home");
@@ -41,7 +55,10 @@ process.env.USERPROFILE = fakeHome;
 process.env.XDG_CACHE_HOME = xdgCacheHome;
 process.env.PATH = `${fakeBin}:${process.env.PATH ?? ""}`;
 process.env.SECURITY_CALL_LOG = callLog;
-Object.defineProperty(process, "platform", { configurable: true, value: "darwin" });
+Object.defineProperty(process, "platform", {
+  configurable: true,
+  value: "darwin",
+});
 
 const observedAuthorization = [];
 let fetchCount = 0;
@@ -51,7 +68,7 @@ globalThis.fetch = async (_url, init = {}) => {
   const authorization =
     headers instanceof Headers
       ? headers.get("authorization")
-      : headers.authorization ?? headers.Authorization;
+      : (headers.authorization ?? headers.Authorization);
   observedAuthorization.push(authorization === `Bearer ${fakeToken}`);
   const utilization = fetchCount === 1 ? 12 : 7;
   return new Response(
@@ -95,7 +112,11 @@ const withoutMarker = await runCli("01-plain-without-marker", [
   "--full",
 ]);
 
-const markerPath = join(xdgCacheHome, "quota-axi", "claude-keychain-access-granted");
+const markerPath = join(
+  xdgCacheHome,
+  "quota-axi",
+  "claude-keychain-access-granted",
+);
 const markerBeforeBootstrap = existsSync(markerPath);
 
 const bootstrap = await runCli("02-bootstrap-with-allow-keychain-prompt", [
@@ -157,18 +178,21 @@ const summary = {
       status: bootstrap.parsed.providers[0]?.state?.status,
       reason: bootstrap.parsed.providers[0]?.state?.reason ?? "none",
       markerMode,
-      cachePercentUsed:
-        JSON.parse(readFileSync(join(evidenceDir, "cache-after-bootstrap.json"), "utf-8"))
-          .providers[0]?.windows[0]?.percentUsed,
+      cachePercentUsed: JSON.parse(
+        readFileSync(join(evidenceDir, "cache-after-bootstrap.json"), "utf-8"),
+      ).providers[0]?.windows[0]?.percentUsed,
     },
     {
       command: "quota-axi --provider claude --json --full",
       exitCode: plainAfterMarker.exitCode,
       status: plainAfterMarker.parsed.providers[0]?.state?.status,
       reason: plainAfterMarker.parsed.providers[0]?.state?.reason ?? "none",
-      cachePercentUsed:
-        JSON.parse(readFileSync(join(evidenceDir, "cache-after-plain-marker.json"), "utf-8"))
-          .providers[0]?.windows[0]?.percentUsed,
+      cachePercentUsed: JSON.parse(
+        readFileSync(
+          join(evidenceDir, "cache-after-plain-marker.json"),
+          "utf-8",
+        ),
+      ).providers[0]?.windows[0]?.percentUsed,
     },
   ],
   securityCalls,
@@ -179,7 +203,10 @@ const summary = {
   cachePath: cacheAfterPlainPath.replace(root, "."),
 };
 
-writeFileSync(join(evidenceDir, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
+writeFileSync(
+  join(evidenceDir, "summary.json"),
+  `${JSON.stringify(summary, null, 2)}\n`,
+);
 
 const markdown = `# quota-axi Claude Keychain Default Read Evidence
 
@@ -218,7 +245,8 @@ if (
   securityCalls[2] !== "find-generic-password -s Claude Code-credentials -w" ||
   markerBeforeBootstrap ||
   markerMode !== "0600" ||
-  withoutMarker.parsed.providers[0]?.state?.reason !== "keychain_access_required" ||
+  withoutMarker.parsed.providers[0]?.state?.reason !==
+    "keychain_access_required" ||
   bootstrap.parsed.providers[0]?.state?.status !== "fresh" ||
   plainAfterMarker.parsed.providers[0]?.state?.status !== "fresh" ||
   summary.cliFlow[2].cachePercentUsed !== 7 ||
