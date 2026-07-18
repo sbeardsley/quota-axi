@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { normalizeClaudeApiUsage } from "../../src/providers/claude.js";
+import {
+  normalizeClaudeApiUsage,
+  normalizeClaudeProfile,
+} from "../../src/providers/claude.js";
 
 const fixtureDir = join(import.meta.dirname, "..", "fixtures", "claude");
 
@@ -84,5 +87,40 @@ describe("Claude quota parsing", () => {
         limitUsd: 20,
       },
     ]);
+  });
+});
+
+describe("Claude OAuth profile parsing", () => {
+  it("normalizes the stable account UUID and non-secret full-output fields", () => {
+    const raw = JSON.parse(
+      readFileSync(join(fixtureDir, "oauth-profile.json"), "utf8"),
+    ) as unknown;
+
+    expect(normalizeClaudeProfile(raw)).toEqual({
+      accountId: "11111111-2222-4333-8444-555555555555",
+      email: "person@example.invalid",
+      organization: "Fixture Organization",
+      identityStatus: "verified",
+    });
+  });
+
+  it("does not invent an identity from email or organization UUID", () => {
+    expect(
+      normalizeClaudeProfile({
+        email_address: "person@example.invalid",
+        organization: {
+          uuid: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("does not treat cached camelCase account metadata as an authoritative profile", () => {
+    expect(
+      normalizeClaudeProfile({
+        accountUuid: "11111111-2222-4333-8444-555555555555",
+        emailAddress: "person@example.invalid",
+      }),
+    ).toBeUndefined();
   });
 });

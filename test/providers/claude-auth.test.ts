@@ -5,6 +5,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
+const originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
 let tempDir: string | undefined;
 
@@ -32,6 +34,9 @@ afterEach(() => {
   else process.env.USERPROFILE = originalUserProfile;
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
+  if (originalClaudeConfigDir === undefined)
+    delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   tempDir = undefined;
 });
@@ -52,6 +57,162 @@ function usePlatform(platform: NodeJS.Platform): void {
 }
 
 describe("Claude credential-state reporting", () => {
+  it("uses CLAUDE_CONFIG_DIR for file credentials", async () => {
+    const home = useTempHome();
+    const configDir = join(home, "managed-claude");
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "fresh-token",
+          expiresAt: "2035-01-01T00:00:00.000Z",
+        },
+      }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ five_hour: { utilization: 12 } }), {
+            status: 200,
+          }),
+      ),
+    );
+
+    const { fetchQuota, inspectAuth } =
+      await import("../../src/providers/claude.js");
+    const auth = await inspectAuth({ allowKeychainPrompt: false });
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(auth.sources[0]).toMatchObject({
+      source: "oauth-file",
+      path: join(configDir, ".credentials.json"),
+      status: "available",
+    });
+    expect(result.state.status).toBe("fresh");
+  });
+
+  it("derives the custom-config Keychain service from the literal config path", async () => {
+    usePlatform("darwin");
+    const home = useTempHome();
+    const configDir = join(home, "managed-claude");
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+    const suffix = createHash("sha256")
+      .update(configDir)
+      .digest("hex")
+      .slice(0, 8);
+    const execFileText = vi.fn(async () => "");
+    vi.doMock("../../src/lib/process.js", () => ({ execFileText }));
+
+    const { inspectAuth } = await import("../../src/providers/claude.js");
+    await inspectAuth({ allowKeychainPrompt: false });
+
+    expect(execFileText).toHaveBeenCalledWith(
+      "security",
+      ["find-generic-password", "-s", `Claude Code-credentials-${suffix}`],
+      expect.any(Number),
+    );
+  });
+
+  it("preserves an empty-present CLAUDE_CONFIG_DIR across profile derivations", async () => {
+    usePlatform("darwin");
+    const home = useTempHome();
+    process.env.CLAUDE_CONFIG_DIR = "";
+    const { claudeKeychainAccessMarkerPath } =
+      await import("../../src/lib/fs.js");
+    const marker = claudeKeychainAccessMarkerPath("");
+    mkdirSync(dirname(marker), { recursive: true, mode: 0o700 });
+    writeFileSync(marker, "granted\n", { mode: 0o600 });
+    const execFileText = vi.fn(async () =>
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "fresh-keychain-token",
+          expiresAt: "2035-01-01T00:00:00.000Z",
+        },
+      }),
+    );
+    vi.doMock("../../src/lib/process.js", () => ({ execFileText }));
+
+    const { claudeCredentialFile, inspectAuth } =
+      await import("../../src/providers/claude.js");
+    const auth = await inspectAuth({ allowKeychainPrompt: false });
+
+    expect(claudeCredentialFile()).toBe(".credentials.json");
+    expect(marker).toBe(
+      join(home, "cache", "quota-axi", "claude-keychain-access-granted"),
+    );
+    expect(execFileText).toHaveBeenCalledWith(
+      "security",
+      ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
+      expect.any(Number),
+    );
+    expect(auth.sources).toContainEqual({
+      source: "keychain",
+      status: "available",
+    });
+  });
+
+  it("normalizes a decomposed CLAUDE_CONFIG_DIR before profile derivations", async () => {
+    usePlatform("darwin");
+    const home = useTempHome();
+    const decomposedConfigDir = join(home, "managed-e\u0301");
+    const normalizedConfigDir = decomposedConfigDir.normalize("NFC");
+    process.env.CLAUDE_CONFIG_DIR = decomposedConfigDir;
+    mkdirSync(normalizedConfigDir, { recursive: true });
+    writeFileSync(
+      join(normalizedConfigDir, ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "fresh-file-token",
+          expiresAt: "2035-01-01T00:00:00.000Z",
+        },
+      }),
+    );
+    const { claudeKeychainAccessMarkerPath } =
+      await import("../../src/lib/fs.js");
+    const marker = claudeKeychainAccessMarkerPath(normalizedConfigDir);
+    mkdirSync(dirname(marker), { recursive: true, mode: 0o700 });
+    writeFileSync(marker, "granted\n", { mode: 0o600 });
+    const suffix = createHash("sha256")
+      .update(normalizedConfigDir)
+      .digest("hex")
+      .slice(0, 8);
+    const execFileText = vi.fn(async () =>
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "fresh-keychain-token",
+          expiresAt: "2035-01-01T00:00:00.000Z",
+        },
+      }),
+    );
+    vi.doMock("../../src/lib/process.js", () => ({ execFileText }));
+
+    const { inspectAuth } = await import("../../src/providers/claude.js");
+    const auth = await inspectAuth({ allowKeychainPrompt: false });
+
+    expect(auth.sources[0]).toMatchObject({
+      source: "oauth-file",
+      path: join(normalizedConfigDir, ".credentials.json"),
+      status: "available",
+    });
+    expect(execFileText).toHaveBeenCalledWith(
+      "security",
+      [
+        "find-generic-password",
+        "-s",
+        `Claude Code-credentials-${suffix}`,
+        "-w",
+      ],
+      expect.any(Number),
+    );
+    expect(auth.sources).toContainEqual({
+      source: "keychain",
+      status: "available",
+    });
+  });
+
   it("surfaces expired file credentials as a skipped attempt and auth_required", async () => {
     const home = useTempHome();
     mkdirSync(join(home, ".claude"), { recursive: true });
@@ -143,6 +304,99 @@ describe("Claude credential-state reporting", () => {
         }),
       }),
     );
+  });
+
+  it("fetches a profile with the same OAuth credential and exposes a verified account identity", async () => {
+    const home = useTempHome();
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(
+      join(home, ".claude", ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "fresh-token",
+          expiresAt: "2035-01-01T00:00:00.000Z",
+        },
+      }),
+    );
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith("/api/oauth/profile")) {
+        return new Response(
+          JSON.stringify({
+            account: {
+              uuid: "11111111-2222-4333-8444-555555555555",
+              email: "person@example.invalid",
+            },
+            organization: { name: "Fixture Organization" },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ five_hour: { utilization: 12 } }), {
+        status: 200,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result.account).toEqual({
+      accountId: "11111111-2222-4333-8444-555555555555",
+      email: "person@example.invalid",
+      organization: "Fixture Organization",
+      identityStatus: "verified",
+    });
+    expect(result.attempts).toContainEqual({
+      source: "oauth-profile",
+      status: "success",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.anthropic.com/api/oauth/profile",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          authorization: "Bearer fresh-token",
+          "Cache-Control": "no-cache",
+        }),
+      }),
+    );
+  });
+
+  it("marks identity unverified when the profile response lacks a stable account id", async () => {
+    const home = useTempHome();
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    writeFileSync(
+      join(home, ".claude", ".credentials.json"),
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: "fresh-token",
+          expiresAt: "2035-01-01T00:00:00.000Z",
+        },
+      }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) =>
+        String(input).endsWith("/api/oauth/profile")
+          ? new Response(
+              JSON.stringify({ email_address: "person@example.invalid" }),
+              { status: 200 },
+            )
+          : new Response(JSON.stringify({ five_hour: { utilization: 12 } }), {
+              status: 200,
+            }),
+      ),
+    );
+
+    const { fetchQuota } = await import("../../src/providers/claude.js");
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result.state.status).toBe("fresh");
+    expect(result.account).toEqual({ identityStatus: "unverified" });
+    expect(result.attempts).toContainEqual({
+      source: "oauth-profile",
+      status: "failed",
+      error: "identity_profile_unrecognized",
+    });
   });
 
   it("surfaces missing file credentials as a skipped attempt and auth_required", async () => {

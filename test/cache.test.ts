@@ -61,6 +61,7 @@ describe("quota cache", () => {
       payload.providers.find((provider) => provider.provider === "codex")
         ?.windows[0].percentUsed,
     ).toBe(20);
+    expect(payload.providers.every((provider) => !provider.account)).toBe(true);
   });
 
   it("clears a stale snapshot after a fresh no-window report", () => {
@@ -98,7 +99,11 @@ function quota(provider: ProviderId, percentUsed: number): ProviderQuota {
       refreshedAt: "2026-07-06T18:10:00Z",
       sourcesTried: ["oauth"],
     },
-    account: { email: "person@example.invalid" },
+    account: {
+      email: "person@example.invalid",
+      accountId: "fixture-account",
+      identityStatus: "verified",
+    },
     attempts: [{ source: "oauth", status: "success" }],
   };
 }

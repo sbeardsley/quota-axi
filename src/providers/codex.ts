@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
 import { readCachedProvider } from "../cache.js";
 import { readJsonFileResult, type JsonFileReadResult } from "../lib/fs.js";
-import { commandExists, terminateChild } from "../lib/process.js";
+import { findCommandPath, terminateChild } from "../lib/process.js";
 import {
   clampPercent,
   nowIso,
@@ -35,6 +35,11 @@ const ENDPOINTS = [
 const API_TIMEOUT_MS = 15_000;
 const CLI_TIMEOUT_MS = 15_000;
 const RPC_TIMEOUT_MS = 8_000;
+const CODEX_BINARY_ENV = "QUOTA_AXI_CODEX_BINARY";
+
+type CodexBinaryState =
+  | { status: "available"; path: string }
+  | { status: "missing"; path?: string; error?: string };
 
 type CodexCredentials = {
   accessToken: string;
@@ -161,13 +166,16 @@ export async function inspectAuth(
 ): Promise<AuthProviderReport> {
   const authFile = codexAuthFile();
   const credentialState = readCredentialState(authFile);
+  const binary = await resolveCodexBinary();
   return {
     provider: "codex",
     sources: [
       credentialState.source,
       {
         source: "cli-rpc",
-        status: (await commandExists("codex")) ? "available" : "missing",
+        path: binary.path,
+        status: binary.status,
+        error: binary.status === "missing" ? binary.error : undefined,
       },
     ],
   };
@@ -461,10 +469,12 @@ async function probeCodexCli(): Promise<{
   credits?: ProviderQuota["credits"];
   refreshedAt: string;
 }> {
-  if (!(await commandExists("codex")))
-    throw new Error("Codex quota unavailable");
+  const binary = await resolveCodexBinary();
+  if (binary.status === "missing") {
+    throw new Error(codexBinaryErrorMessage(binary));
+  }
   const child = spawn(
-    "codex",
+    binary.path,
     ["-s", "read-only", "-a", "untrusted", "app-server"],
     {
       stdio: ["pipe", "pipe", "pipe"],
@@ -568,6 +578,45 @@ async function probeCodexCli(): Promise<{
   } finally {
     terminateChild(child);
   }
+}
+
+async function resolveCodexBinary(): Promise<CodexBinaryState> {
+  const configured = process.env[CODEX_BINARY_ENV];
+  if (configured !== undefined) {
+    const path = configured.trim();
+    if (!path || !isAbsolute(path)) {
+      return {
+        status: "missing",
+        error: "codex_binary_override_not_absolute",
+      };
+    }
+    const executable = await findCommandPath(path);
+    if (!executable) {
+      return {
+        status: "missing",
+        path,
+        error: "codex_binary_override_not_executable",
+      };
+    }
+    return { status: "available", path: executable };
+  }
+
+  const executable = await findCommandPath("codex");
+  return executable
+    ? { status: "available", path: executable }
+    : { status: "missing" };
+}
+
+function codexBinaryErrorMessage(
+  binary: Extract<CodexBinaryState, { status: "missing" }>,
+): string {
+  if (binary.error === "codex_binary_override_not_absolute") {
+    return "Configured Codex binary must be an absolute executable path";
+  }
+  if (binary.error === "codex_binary_override_not_executable") {
+    return "Configured Codex binary is not executable";
+  }
+  return "Codex quota unavailable";
 }
 
 function sendRpc(

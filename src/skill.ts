@@ -80,6 +80,9 @@ or when comparing supported local provider headroom side by side.
    \`quota-axi --allow-keychain-prompt\` once and approve Keychain access ("Always Allow").
    After that successful grant, plain \`quota-axi\` calls reuse the existing Keychain access
    marker to refresh live Claude quota without requiring the flag.
+7. For a managed Codex installation, set \`QUOTA_AXI_CODEX_BINARY\` to its absolute executable
+   path. quota-axi uses that exact executable for auth inspection and the read-only app-server
+   fallback, and fails closed if the override is invalid.
 
 ## Usage
 
@@ -95,6 +98,9 @@ ${TOP_HELP.trimEnd()}
   every provider failed; exit code 2 means a usage error.
 - Percentages are not comparable across providers - quota-axi never claims one provider's
   percentage equals another's.
+- Claude \`--full\` output exposes the authoritative OAuth profile \`account.uuid\` as
+  \`account.accountId\` when Anthropic returns one; otherwise the account identity is explicitly
+  marked unverified rather than inferred.
 - The quota cache at \`~/.cache/quota-axi/quotas.json\` only ever holds normalized
   non-secret snapshots.
   Fresh provider reports with no windows clear stale provider snapshots instead of caching

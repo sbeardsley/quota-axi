@@ -55,6 +55,7 @@ export type ProviderQuota = {
     email?: string;
     organization?: string;
     accountId?: string;
+    identityStatus?: "verified" | "unverified";
   };
   windows: QuotaWindow[];
   credits?: {

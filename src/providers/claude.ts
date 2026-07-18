@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, renameSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readCachedProvider } from "../cache.js";
@@ -29,14 +30,14 @@ import {
 } from "./common.js";
 
 const API_URL = "https://api.anthropic.com/api/oauth/usage";
+const PROFILE_API_URL = "https://api.anthropic.com/api/oauth/profile";
 const OAUTH_BETA = "oauth-2025-04-20";
 const CLAUDE_CODE_USER_AGENT = "claude-code/2.1.202";
 const API_TIMEOUT_MS = 15_000;
 const KEYCHAIN_PROMPT_TIMEOUT_MS = 60_000;
 const KEYCHAIN_PRESENCE_TIMEOUT_MS = 5_000;
 const KEYCHAIN_ITEM_NOT_FOUND_EXIT_CODE = 44;
-const CREDENTIAL_FILE = join(homedir(), ".claude", ".credentials.json");
-const KEYCHAIN_SERVICE = "Claude Code-credentials";
+const DEFAULT_KEYCHAIN_SERVICE = "Claude Code-credentials";
 
 type ClaudeCredentials = {
   source: "oauth-file" | "keychain";
@@ -59,6 +60,16 @@ type CredentialState =
   | UnavailableCredentialState
   | SkippedCredentialState;
 type KeychainItemPresence = "present" | "missing" | "unknown";
+type ClaudeAccount = NonNullable<ProviderQuota["account"]>;
+type ClaudeIdentityResult = {
+  account: ClaudeAccount;
+  error?: string;
+};
+type ClaudeProfileLocations = {
+  credentialFile: string;
+  keychainService: string;
+  keychainAccessMarker: string;
+};
 
 type RawUsageWindow = {
   utilization?: unknown;
@@ -142,6 +153,15 @@ export async function fetchQuota(
       try {
         const quota = await fetchOauthUsage(credential);
         attempts[attempts.length - 1] = { source: "oauth", status: "success" };
+        attempts.push(
+          quota.identityError
+            ? {
+                source: "oauth-profile",
+                status: "failed",
+                error: quota.identityError,
+              }
+            : { source: "oauth-profile", status: "success" },
+        );
         return successProvider({
           provider: "claude",
           label: "Claude",
@@ -188,14 +208,15 @@ export async function fetchQuota(
 export async function inspectAuth(
   options: ProviderOptions,
 ): Promise<AuthProviderReport> {
-  const states = await readCredentialStates(options);
+  const locations = resolveClaudeProfileLocations();
+  const states = await readCredentialStates(options, locations);
   const sources = states.map((state): AuthSourceReport => {
     if (state.status === "available") {
       return {
         source: state.credentials.source,
         path:
           state.credentials.source === "oauth-file"
-            ? CREDENTIAL_FILE
+            ? locations.credentialFile
             : undefined,
         status: "available",
       };
@@ -236,6 +257,33 @@ export function normalizeClaudeApiUsage(
 
   if (windows.length === 0) return undefined;
   return { plan, windows, refreshedAt: nowIso() };
+}
+
+export function normalizeClaudeProfile(
+  raw: unknown,
+): ClaudeAccount | undefined {
+  const data = objectValue(raw);
+  if (!data) return undefined;
+  const account = objectValue(data.account);
+  const accountId = stringValue(account?.uuid);
+  if (!accountId) return undefined;
+
+  const organization = objectValue(data.organization);
+  return {
+    accountId,
+    email:
+      stringValue(account?.email) ??
+      stringValue(account?.email_address) ??
+      stringValue(account?.emailAddress) ??
+      stringValue(data.email_address) ??
+      stringValue(data.emailAddress) ??
+      stringValue(data.email),
+    organization:
+      stringValue(organization?.name) ??
+      stringValue(data.organization_name) ??
+      stringValue(data.organizationName),
+    identityStatus: "verified",
+  };
 }
 
 function normalizeScopedLimits(raw: unknown): QuotaWindow[] {
@@ -309,29 +357,32 @@ function slugify(value: string): string {
 
 async function readCredentialStates(
   options: ProviderOptions,
+  locations = resolveClaudeProfileLocations(),
 ): Promise<CredentialState[]> {
   const states: CredentialState[] = [];
 
   const fileState = extractCredentialState(
-    readJsonFileResult(CREDENTIAL_FILE),
+    readJsonFileResult(locations.credentialFile),
     "oauth-file",
-    CREDENTIAL_FILE,
+    locations.credentialFile,
   );
   states.push(fileState);
 
   if (process.platform === "darwin") {
-    if (options.allowKeychainPrompt || hasKeychainAccessMarker()) {
-      states.push(await readKeychainCredentialState());
+    if (options.allowKeychainPrompt || hasKeychainAccessMarker(locations)) {
+      states.push(await readKeychainCredentialState(locations));
     } else {
-      states.push(await readSkippedKeychainCredentialState());
+      states.push(await readSkippedKeychainCredentialState(locations));
     }
   }
 
   return states;
 }
 
-async function readSkippedKeychainCredentialState(): Promise<CredentialState> {
-  const presence = await readKeychainItemPresence();
+async function readSkippedKeychainCredentialState(
+  locations: ClaudeProfileLocations,
+): Promise<CredentialState> {
+  const presence = await readKeychainItemPresence(locations);
   if (presence === "present") {
     return {
       status: "skipped",
@@ -359,11 +410,13 @@ async function readSkippedKeychainCredentialState(): Promise<CredentialState> {
   };
 }
 
-async function readKeychainItemPresence(): Promise<KeychainItemPresence> {
+async function readKeychainItemPresence(
+  locations: ClaudeProfileLocations,
+): Promise<KeychainItemPresence> {
   try {
     await execFileText(
       "security",
-      ["find-generic-password", "-s", KEYCHAIN_SERVICE],
+      ["find-generic-password", "-s", locations.keychainService],
       KEYCHAIN_PRESENCE_TIMEOUT_MS,
     );
     return "present";
@@ -372,18 +425,20 @@ async function readKeychainItemPresence(): Promise<KeychainItemPresence> {
   }
 }
 
-async function readKeychainCredentialState(): Promise<CredentialState> {
+async function readKeychainCredentialState(
+  locations: ClaudeProfileLocations,
+): Promise<CredentialState> {
   let blob: string;
   try {
     blob = await execFileText(
       "security",
-      ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+      ["find-generic-password", "-s", locations.keychainService, "-w"],
       KEYCHAIN_PROMPT_TIMEOUT_MS,
     );
   } catch (error) {
     return keychainFailureState(error);
   }
-  writeKeychainAccessMarkerBestEffort();
+  writeKeychainAccessMarkerBestEffort(locations);
   try {
     return extractCredentialState(
       { status: "success", value: JSON.parse(blob) },
@@ -401,13 +456,15 @@ async function readKeychainCredentialState(): Promise<CredentialState> {
   }
 }
 
-function hasKeychainAccessMarker(): boolean {
-  return existsSync(claudeKeychainAccessMarkerPath());
+function hasKeychainAccessMarker(locations: ClaudeProfileLocations): boolean {
+  return existsSync(locations.keychainAccessMarker);
 }
 
-function writeKeychainAccessMarkerBestEffort(): void {
+function writeKeychainAccessMarkerBestEffort(
+  locations: ClaudeProfileLocations,
+): void {
   try {
-    const file = claudeKeychainAccessMarkerPath();
+    const file = locations.keychainAccessMarker;
     ensurePrivateParent(file);
     const temp = `${file}.${process.pid}.tmp`;
     writeFileSync(temp, "granted\n", { mode: 0o600 });
@@ -417,6 +474,36 @@ function writeKeychainAccessMarkerBestEffort(): void {
   } catch {
     return;
   }
+}
+
+export function claudeCredentialFile(): string {
+  return resolveClaudeProfileLocations().credentialFile;
+}
+
+export function claudeKeychainService(): string {
+  return resolveClaudeProfileLocations().keychainService;
+}
+
+function resolveClaudeProfileLocations(): ClaudeProfileLocations {
+  const configuredDir = process.env.CLAUDE_CONFIG_DIR;
+  const configDir = (configuredDir ?? join(homedir(), ".claude")).normalize(
+    "NFC",
+  );
+  const keychainConfigDir = configuredDir ? configDir : undefined;
+  return {
+    credentialFile: join(configDir, ".credentials.json"),
+    keychainService: keychainServiceForConfigDir(keychainConfigDir),
+    keychainAccessMarker: claudeKeychainAccessMarkerPath(keychainConfigDir),
+  };
+}
+
+function keychainServiceForConfigDir(configDir?: string): string {
+  if (!configDir) return DEFAULT_KEYCHAIN_SERVICE;
+  const suffix = createHash("sha256")
+    .update(configDir)
+    .digest("hex")
+    .slice(0, 8);
+  return `${DEFAULT_KEYCHAIN_SERVICE}-${suffix}`;
 }
 
 function isKeychainItemNotFound(error: unknown): boolean {
@@ -495,6 +582,7 @@ function extractCredentialState(
 async function fetchOauthUsage(credentials: ClaudeCredentials): Promise<{
   plan?: string;
   account?: ProviderQuota["account"];
+  identityError?: string;
   windows: QuotaWindow[];
   refreshedAt: string;
 }> {
@@ -517,10 +605,58 @@ async function fetchOauthUsage(credentials: ClaudeCredentials): Promise<{
       credentials.plan,
     );
     if (!quota) throw new Error("Claude quota unavailable");
-    return quota;
+    const identity = await fetchOauthProfile(credentials);
+    return {
+      ...quota,
+      account: identity.account,
+      identityError: identity.error,
+    };
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function fetchOauthProfile(
+  credentials: ClaudeCredentials,
+): Promise<ClaudeIdentityResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const response = await fetch(PROFILE_API_URL, {
+      headers: {
+        authorization: `Bearer ${credentials.accessToken}`,
+        "User-Agent": CLAUDE_CODE_USER_AGENT,
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+        accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return unverifiedClaudeIdentity(
+        `identity_profile_http_${response.status}`,
+      );
+    }
+    const account = normalizeClaudeProfile(await response.json());
+    return account
+      ? { account }
+      : unverifiedClaudeIdentity("identity_profile_unrecognized");
+  } catch (error) {
+    return unverifiedClaudeIdentity(
+      error instanceof Error && error.name === "AbortError"
+        ? "identity_profile_timeout"
+        : "identity_profile_unavailable",
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function unverifiedClaudeIdentity(error: string): ClaudeIdentityResult {
+  return {
+    account: { identityStatus: "unverified" },
+    error,
+  };
 }
 
 // Anthropic's OAuth usage endpoint follows plain HTTP semantics: 401/403 mean

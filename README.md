@@ -95,7 +95,7 @@ $ quota-axi --provider claude --json
       "state": {
         "status": "fresh",
         "stale": false,
-        "sourcesTried": ["oauth"],
+        "sourcesTried": ["oauth", "oauth-profile"],
         "refreshedAt": "2026-03-15T16:41:55.000Z"
       }
     }
@@ -111,7 +111,7 @@ auth[7]{provider,source,path,status,error}:
   claude,oauth-file,~/.claude/.credentials.json,available,none
   claude,keychain,none,skipped,keychain_prompt_required
   codex,auth-json,~/.codex/auth.json,available,none
-  codex,cli-rpc,none,available,none
+  codex,cli-rpc,~/.local/bin/codex,available,none
   cursor,state-vscdb,~/Library/Application Support/Cursor/User/globalStorage/state.vscdb,available,none
   copilot,apps-json,~/.config/github-copilot/apps.json,available,none
   grok,auth-json,~/.grok/auth.json,available,none
@@ -224,8 +224,10 @@ It is generated from `src/skill.ts`; update it with `pnpm run build:skill` and v
 | Quota report                  | `providers`                                                                                |
 | Provider report               | `provider`, `label`, `source`, `windows`, `state`, optional `plan`, and optional `credits` |
 | Provider report with `--full` | Optional `account` identity and per-source `attempts`                                      |
+| Account identity (`--full`)   | Optional `email`, `organization`, `accountId`, and `identityStatus`                        |
 
 Account identity and per-source `attempts` are omitted unless `--full` is passed.
+Claude `identityStatus` is `verified` only when Anthropic returns an authoritative account identifier; `email` and `organization` are display-only and must not be used for duplicate detection.
 
 ### Provider `state`
 
@@ -293,13 +295,13 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 
 ### Provider credential sources
 
-| Provider       | Credential sources read                                                                                                                                                          |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude         | `~/.claude/.credentials.json`; on macOS, the `Claude Code-credentials` Keychain value with `--allow-keychain-prompt` or, after a non-secret access marker exists, on plain calls |
-| Codex          | `$CODEX_HOME/auth.json` or `~/.codex/auth.json` before the read-only CLI fallback                                                                                                |
-| Cursor         | `$CURSOR_STATE_DB` when set or the platform Cursor state database path                                                                                                           |
-| GitHub Copilot | `$GITHUB_COPILOT_APPS_JSON` when set or the local Copilot apps auth file                                                                                                         |
-| Grok           | `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME/auth.json` / `~/.grok/auth.json`                                                                       |
+| Provider       | Credential sources read                                                                                                                                                                                                                                          |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude         | `$CLAUDE_CONFIG_DIR/.credentials.json` or `~/.claude/.credentials.json`; on macOS, the corresponding default or path-hashed Claude Code Keychain value with `--allow-keychain-prompt` or, after a profile-scoped non-secret access marker exists, on plain calls |
+| Codex          | `$CODEX_HOME/auth.json` or `~/.codex/auth.json` before the read-only CLI fallback; `$QUOTA_AXI_CODEX_BINARY` can pin that fallback to an absolute executable path                                                                                                |
+| Cursor         | `$CURSOR_STATE_DB` when set or the platform Cursor state database path                                                                                                                                                                                           |
+| GitHub Copilot | `$GITHUB_COPILOT_APPS_JSON` when set or the local Copilot apps auth file                                                                                                                                                                                         |
+| Grok           | `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME/auth.json` / `~/.grok/auth.json`                                                                                                                                                       |
 
 ### Provider notes
 
@@ -308,11 +310,13 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 - quota-axi records the non-secret access marker after any successful Keychain value read.
 - When that marker exists, plain calls read the Keychain value again so an already-approved "Always Allow" grant keeps live Claude quota fresh.
 - Without the flag or marker, quota-axi may perform a non-secret Keychain item presence check so it only suggests Keychain access when a Claude credential item exists.
+- After a successful usage read, quota-axi queries Anthropic's first-party OAuth profile endpoint with the same credential. Its authoritative root `account.uuid` is exposed as `account.accountId` only in `--full` output; if that field is absent, `identityStatus` is `unverified` instead of deriving an identity from email, organization data, or cached account metadata.
 
 **Codex**
 
 - Codex `auth.json` support is OAuth-token only; API key values such as `OPENAI_API_KEY` are treated as invalid for quota usage calls and are not sent to ChatGPT usage endpoints.
 - It may run `codex -s read-only -a untrusted app-server` for Codex JSON-RPC fallback.
+- Set `QUOTA_AXI_CODEX_BINARY` to an absolute executable path when the fallback must use a specific Codex installation. Auth inspection and the app-server probe resolve the same path, and an invalid override fails closed instead of consulting `PATH`.
 
 **Cursor**
 
@@ -340,15 +344,15 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 
 ### Cache
 
-| Item                                   | Behavior                                                                                                                                |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Quota cache                            | Lives at `~/.cache/quota-axi/quotas.json` or under `$XDG_CACHE_HOME/quota-axi/` when `XDG_CACHE_HOME` is set.                           |
-| Quota cache permissions                | Uses `0600` file permissions.                                                                                                           |
-| Quota cache contents                   | Stores normalized non-secret snapshots only.                                                                                            |
-| Claude Keychain access marker          | Lives alongside the quota cache as `claude-keychain-access-granted`, uses `0600` file permissions, and contains no credential material. |
-| Cached reports                         | Only fresh provider snapshots with windows are cached.                                                                                  |
-| Fresh provider reports with no windows | Clear any cached snapshot for that provider, so entitlement-only reports do not leave stale quota windows behind.                       |
-| Reports and details not cached         | Failed providers, stale providers, account identity, and source attempts are not cached.                                                |
+| Item                                   | Behavior                                                                                                                                                                                                                                      |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Quota cache                            | Lives at `~/.cache/quota-axi/quotas.json` or under `$XDG_CACHE_HOME/quota-axi/` when `XDG_CACHE_HOME` is set.                                                                                                                                 |
+| Quota cache permissions                | Uses `0600` file permissions.                                                                                                                                                                                                                 |
+| Quota cache contents                   | Stores normalized non-secret snapshots only.                                                                                                                                                                                                  |
+| Claude Keychain access marker          | Lives alongside the quota cache as `claude-keychain-access-granted` for the default profile or with an eight-character path-hash suffix for a `$CLAUDE_CONFIG_DIR` profile; uses `0600` file permissions and contains no credential material. |
+| Cached reports                         | Only fresh provider snapshots with windows are cached.                                                                                                                                                                                        |
+| Fresh provider reports with no windows | Clear any cached snapshot for that provider, so entitlement-only reports do not leave stale quota windows behind.                                                                                                                             |
+| Reports and details not cached         | Failed providers, stale providers, account identity, and source attempts are not cached.                                                                                                                                                      |
 
 ## Development
 

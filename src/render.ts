@@ -59,6 +59,7 @@ export function renderQuotaToon(
       email: provider.account?.email ?? "hidden",
       organization: provider.account?.organization ?? "none",
       accountId: provider.account?.accountId ?? "none",
+      identityStatus: provider.account?.identityStatus ?? "unknown",
     }));
     const attempts = response.providers.flatMap((provider) =>
       (provider.attempts ?? []).map((attempt) => attemptRow(provider, attempt)),
