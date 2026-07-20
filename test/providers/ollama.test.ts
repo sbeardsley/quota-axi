@@ -22,6 +22,7 @@ const originalCookiePath = process.env.OLLAMA_COOKIE_PATH;
 const originalCookie = process.env.OLLAMA_COOKIE;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 let tempDir: string | undefined;
+const overrideEnv: string[] = [];
 
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "quota-axi-ollama-"));
@@ -36,6 +37,7 @@ afterEach(() => {
   restoreEnv("OLLAMA_COOKIE_PATH", originalCookiePath);
   restoreEnv("OLLAMA_COOKIE", originalCookie);
   restoreEnv("XDG_CACHE_HOME", originalXdgCacheHome);
+  while (overrideEnv.length > 0) delete process.env[overrideEnv.pop()!];
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   tempDir = undefined;
 });
@@ -153,6 +155,30 @@ describe("Ollama quota provider", () => {
         redirect: "manual",
       }),
     );
+  });
+
+  it("pins the settings URL so no environment override can redirect the cookie", async () => {
+    process.env.OLLAMA_COOKIE = "ollama_session=valid";
+    for (const name of [
+      "OLLAMA_SETTINGS_URL",
+      "OLLAMA_HOST",
+      "OLLAMA_BASE_URL",
+      "OLLAMA_URL",
+    ]) {
+      process.env[name] = "https://evil.example/settings";
+      overrideEnv.push(name);
+    }
+    const fetchMock = vi.fn(
+      async () => new Response(fixture("settings-valid.html"), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result.state.status).toBe("fresh");
+    for (const [url] of fetchMock.mock.calls) {
+      expect(url).toBe("https://ollama.com/settings");
+    }
   });
 
   it("treats a rejected settings request as unavailable rather than sign-in required", async () => {

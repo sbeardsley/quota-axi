@@ -110,7 +110,7 @@ $ quota-axi --provider claude --json
 $ quota-axi auth
 bin: ~/.npm/_npx/.../quota-axi
 description: Inspect local quota auth sources without printing secret values
-auth[7]{provider,source,path,status,error}:
+auth[9]{provider,source,path,status,error}:
   claude,oauth-file,~/.claude/.credentials.json,available,none
   claude,keychain,none,skipped,keychain_prompt_required
   codex,auth-json,~/.codex/auth.json,available,none
@@ -118,6 +118,8 @@ auth[7]{provider,source,path,status,error}:
   cursor,state-vscdb,~/Library/Application Support/Cursor/User/globalStorage/state.vscdb,available,none
   copilot,apps-json,~/.config/github-copilot/apps.json,available,none
   grok,auth-json,~/.grok/auth.json,available,none
+  ollama,cookie-file,none,missing,none
+  ollama,auth-env,none,missing,none
 help[1]:
   Run `quota-axi --allow-keychain-prompt auth` to permit macOS Keychain access
 ```
@@ -191,7 +193,7 @@ It is generated from `src/skill.ts`; update it with `pnpm run build:skill` and v
 └───────────────┘       └──────────────┘
 ```
 
-- **Live first** - direct provider HTTP calls use 15 second request timeouts, Codex JSON-RPC reads use short per-call timeouts, and stale cache fallback is per provider.
+- **Live first** - direct provider HTTP calls use bounded request timeouts (15 seconds, 10 seconds for the Ollama settings read), Codex JSON-RPC reads use short per-call timeouts, and stale cache fallback is per provider.
 - **No first-run Keychain prompt** - macOS Claude Keychain value reads are skipped on plain calls until `--allow-keychain-prompt` succeeds once, then future plain calls reuse that existing grant.
 - **Partial success is success** - one provider can fail while another returns fresh or stale data, and the process still exits 0. Exit code 1 means every provider failed, and 2 means a usage error.
 - **No token equivalence** - quota-axi does not claim that one provider percentage equals another provider percentage.
