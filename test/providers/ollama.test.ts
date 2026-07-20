@@ -226,6 +226,29 @@ describe("Ollama quota provider", () => {
     expect(result.windows).toEqual([]);
   });
 
+  it("still detects sign-in when script content carries usage-shaped labels", async () => {
+    process.env.OLLAMA_COOKIE = "ollama_session=expired";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(fixture("settings-logged-out-script.html"), {
+            status: 200,
+          }),
+      ),
+    );
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result).toMatchObject({
+      windows: [],
+      state: {
+        status: "auth_required",
+        error: "Ollama sign-in required",
+      },
+    });
+  });
+
   it("falls back to stale cache when the settings markup is unavailable", async () => {
     process.env.OLLAMA_COOKIE = "ollama_session=valid";
     writeCachedProviders([cachedOllamaQuota()]);

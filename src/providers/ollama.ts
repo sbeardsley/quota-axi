@@ -211,9 +211,9 @@ export async function fetchOllamaSettings(
       signal: controller.signal,
     });
     rejectUnusableSettingsResponse(response);
-    const html = await response.text();
-    if (looksLoggedOut(html)) throw new Error("Ollama sign-in required");
-    const quota = normalizeOllamaUsage(html);
+    const markup = maskRawTextContent(await response.text());
+    if (looksLoggedOut(markup)) throw new Error("Ollama sign-in required");
+    const quota = normalizeOllamaUsage(markup);
     if (!quota) throw new Error("Ollama quota unavailable");
     return quota;
   } finally {
