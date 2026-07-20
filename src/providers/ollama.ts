@@ -20,7 +20,9 @@ import {
 } from "./common.js";
 
 const SETTINGS_URL = "https://ollama.com/settings";
+const SETTINGS_USER_AGENT = "quota-axi";
 const SETTINGS_TIMEOUT_MS = 10_000;
+const RESET_SCAN_LIMIT = 4000;
 const FIVE_HOURS_SECONDS = 5 * 60 * 60;
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 
@@ -124,8 +126,9 @@ export function normalizeOllamaUsage(html: string):
       refreshedAt: string;
     }
   | undefined {
-  const session = extractUsageWindow(html, "session");
-  const weekly = extractUsageWindow(html, "weekly");
+  const labels = collectUsageLabels(html);
+  const session = extractUsageWindow(html, labels, "session");
+  const weekly = extractUsageWindow(html, labels, "weekly");
   if (!session || !weekly) return undefined;
   return {
     windows: [
@@ -159,12 +162,11 @@ export async function fetchOllamaSettings(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SETTINGS_TIMEOUT_MS);
   try {
-    const response = await fetch(ollamaSettingsUrl(), {
+    const response = await fetch(SETTINGS_URL, {
       headers: {
         accept: "text/html,application/xhtml+xml",
         cookie: credentials.cookie,
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "user-agent": SETTINGS_USER_AGENT,
       },
       redirect: "manual",
       signal: controller.signal,
@@ -299,35 +301,56 @@ function isOwnerOnly(mode: number): boolean {
   return process.platform === "win32" || (mode & 0o077) === 0;
 }
 
-function extractUsageWindow(
-  html: string,
-  name: "session" | "weekly",
-): { percentUsed: number; resetsAt: string } | undefined {
-  const labelPattern = new RegExp(
-    `<div\\b[^>]*aria-label=(["'])([^"']*)\\1[^>]*>`,
-    "gi",
-  );
+type UsageLabel = {
+  name: "session" | "weekly";
+  percentUsed: number;
+  index: number;
+};
+
+function collectUsageLabels(html: string): UsageLabel[] {
+  const labelPattern = /<div\b[^>]*aria-label=(["'])([^"']*)\1[^>]*>/gi;
+  const labels: UsageLabel[] = [];
   let match: RegExpExecArray | null;
   while ((match = labelPattern.exec(html))) {
     const aria = decodeHtmlAttribute(match[2]);
     const usage = aria.match(
-      new RegExp(`^${name}\\s+usage\\s+([0-9]+(?:\\.[0-9]+)?)%`, "i"),
+      /^(session|weekly)\s+usage\s+([0-9]+(?:\.[0-9]+)?)%/i,
     );
     if (!usage) continue;
-    const percentUsed = Number(usage[1]);
-    if (!Number.isFinite(percentUsed)) return undefined;
-    const resetsAt = extractNearbyReset(html, match.index);
-    if (!resetsAt) return undefined;
-    return { percentUsed: clampPercent(percentUsed), resetsAt };
+    labels.push({
+      name: usage[1].toLowerCase() as "session" | "weekly",
+      percentUsed: Number(usage[2]),
+      index: match.index,
+    });
   }
-  return undefined;
+  return labels;
 }
 
-function extractNearbyReset(
+function extractUsageWindow(
   html: string,
-  usageIndex: number,
+  labels: UsageLabel[],
+  name: "session" | "weekly",
+): { percentUsed: number; resetsAt: string } | undefined {
+  const matches = labels.filter((label) => label.name === name);
+  if (matches.length !== 1) return undefined;
+  const label = matches[0];
+  if (!Number.isFinite(label.percentUsed)) return undefined;
+  const resetsAt = extractScopedReset(html, labels, label);
+  if (!resetsAt) return undefined;
+  return { percentUsed: clampPercent(label.percentUsed), resetsAt };
+}
+
+function extractScopedReset(
+  html: string,
+  labels: UsageLabel[],
+  label: UsageLabel,
 ): string | undefined {
-  const slice = html.slice(usageIndex, usageIndex + 4000);
+  const nextLabel = labels.find((other) => other.index > label.index);
+  const end = Math.min(
+    label.index + RESET_SCAN_LIMIT,
+    nextLabel?.index ?? html.length,
+  );
+  const slice = html.slice(label.index, end);
   const match = slice.match(/\bdata-time=(["'])([^"']+)\1/i);
   return parseIso(decodeHtmlAttribute(match?.[2]));
 }
@@ -344,7 +367,7 @@ function stripTags(value: string): string {
 }
 
 function rejectUnusableSettingsResponse(response: Response): void {
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     throw new Error("Ollama sign-in required");
   }
   if (response.status >= 300 && response.status < 400) {
@@ -357,10 +380,6 @@ function rejectUnusableSettingsResponse(response: Response): void {
   }
   if (!response.ok)
     throw new Error(`Ollama quota unavailable (${response.status})`);
-}
-
-function ollamaSettingsUrl(): string {
-  return stringValue(process.env.OLLAMA_SETTINGS_URL) ?? SETTINGS_URL;
 }
 
 function parseIso(value: string | undefined): string | undefined {

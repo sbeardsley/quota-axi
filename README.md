@@ -306,7 +306,7 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 | Cursor         | `$CURSOR_STATE_DB` when set or the platform Cursor state database path                                                                                                                                                                                           |
 | GitHub Copilot | `$GITHUB_COPILOT_APPS_JSON` when set or the local Copilot apps auth file                                                                                                                                                                                         |
 | Grok           | `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME/auth.json` / `~/.grok/auth.json`                                                                                                                                                       |
-| Ollama Cloud   | `$OLLAMA_COOKIE_PATH` owner-only cookie file, or inline `$OLLAMA_COOKIE` when no cookie file path is configured; `$OLLAMA_SETTINGS_URL` can override the settings page URL for tests or compatible deployments                                                   |
+| Ollama Cloud   | `$OLLAMA_COOKIE_PATH` owner-only cookie file, or inline `$OLLAMA_COOKIE` when no cookie file path is configured                                                                                                                                                  |
 
 ### Provider notes
 

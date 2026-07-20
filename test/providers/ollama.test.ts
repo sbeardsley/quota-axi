@@ -20,7 +20,6 @@ import type { ProviderQuota } from "../../src/types.js";
 const fixtureDir = new URL("../fixtures/ollama/", import.meta.url);
 const originalCookiePath = process.env.OLLAMA_COOKIE_PATH;
 const originalCookie = process.env.OLLAMA_COOKIE;
-const originalSettingsUrl = process.env.OLLAMA_SETTINGS_URL;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 let tempDir: string | undefined;
 
@@ -29,7 +28,6 @@ beforeEach(() => {
   process.env.XDG_CACHE_HOME = join(tempDir, "cache");
   delete process.env.OLLAMA_COOKIE_PATH;
   delete process.env.OLLAMA_COOKIE;
-  delete process.env.OLLAMA_SETTINGS_URL;
 });
 
 afterEach(() => {
@@ -37,7 +35,6 @@ afterEach(() => {
   vi.useRealTimers();
   restoreEnv("OLLAMA_COOKIE_PATH", originalCookiePath);
   restoreEnv("OLLAMA_COOKIE", originalCookie);
-  restoreEnv("OLLAMA_SETTINGS_URL", originalSettingsUrl);
   restoreEnv("XDG_CACHE_HOME", originalXdgCacheHome);
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
   tempDir = undefined;
@@ -80,6 +77,16 @@ describe("Ollama settings parsing", () => {
       normalizeOllamaUsage(fixture("settings-logged-out.html")),
     ).toBeUndefined();
   });
+
+  it("rejects markup with a duplicate usage label instead of trusting the first match", () => {
+    expect(
+      normalizeOllamaUsage(fixture("settings-duplicate.html")),
+    ).toBeUndefined();
+  });
+
+  it("does not bind a window to another window's reset timestamp", () => {
+    expect(normalizeOllamaUsage(fixture("settings-grid.html"))).toBeUndefined();
+  });
 });
 
 describe("Ollama quota provider", () => {
@@ -100,11 +107,10 @@ describe("Ollama quota provider", () => {
     });
   });
 
-  it("prefers OLLAMA_COOKIE_PATH over OLLAMA_COOKIE and honors settings URL override", async () => {
+  it("prefers OLLAMA_COOKIE_PATH over OLLAMA_COOKIE and always uses the first-party settings URL", async () => {
     const cookieFile = writeCookieFile("ollama_session=file-cookie");
     process.env.OLLAMA_COOKIE_PATH = cookieFile;
     process.env.OLLAMA_COOKIE = "ollama_session=env-cookie";
-    process.env.OLLAMA_SETTINGS_URL = "https://example.invalid/custom-settings";
     const fetchMock = vi.fn(
       async () => new Response(fixture("settings-valid.html"), { status: 200 }),
     );
@@ -114,14 +120,33 @@ describe("Ollama quota provider", () => {
 
     expect(result.state.status).toBe("fresh");
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://example.invalid/custom-settings",
+      "https://ollama.com/settings",
       expect.objectContaining({
         headers: expect.objectContaining({
           cookie: "ollama_session=file-cookie",
+          "user-agent": "quota-axi",
         }),
         redirect: "manual",
       }),
     );
+  });
+
+  it("treats a rejected settings request as unavailable rather than sign-in required", async () => {
+    process.env.OLLAMA_COOKIE = "ollama_session=valid";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("forbidden", { status: 403 })),
+    );
+
+    const result = await fetchQuota({ allowKeychainPrompt: false });
+
+    expect(result).toMatchObject({
+      windows: [],
+      state: {
+        status: "error",
+        error: "Ollama quota unavailable (403)",
+      },
+    });
   });
 
   it("uses OLLAMA_COOKIE when no cookie file is configured", async () => {
