@@ -93,6 +93,24 @@ describe("Ollama settings parsing", () => {
       normalizeOllamaUsage(fixture("settings-foreign-reset.html")),
     ).toBeUndefined();
   });
+
+  it("does not widen past a sectioning boundary when each window has its own section", () => {
+    expect(
+      normalizeOllamaUsage(fixture("settings-split-sections.html")),
+    ).toBeUndefined();
+  });
+
+  it("ignores usage-shaped markup inside script content", () => {
+    const html = fixture("settings-valid.html").replace(
+      "<h2>Usage</h2>",
+      `<script>var t = '<div aria-label="Session usage 99%"></div>';</script>`,
+    );
+
+    expect(normalizeOllamaUsage(html)?.windows[0]).toMatchObject({
+      id: "five_hour",
+      percentUsed: 34,
+    });
+  });
 });
 
 describe("Ollama quota provider", () => {

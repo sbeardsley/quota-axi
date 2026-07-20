@@ -23,7 +23,18 @@ const SETTINGS_URL = "https://ollama.com/settings";
 const SETTINGS_USER_AGENT = "quota-axi";
 const SETTINGS_TIMEOUT_MS = 10_000;
 const RESET_SCAN_LIMIT = 4000;
-const DOCUMENT_LEVEL_ELEMENTS = new Set(["html", "body", "main"]);
+const BLOCK_BOUNDARY_ELEMENTS = new Set([
+  "html",
+  "body",
+  "main",
+  "section",
+  "article",
+  "aside",
+  "nav",
+  "header",
+  "footer",
+  "form",
+]);
 const VOID_ELEMENTS = new Set([
   "area",
   "base",
@@ -40,7 +51,12 @@ const VOID_ELEMENTS = new Set([
   "track",
   "wbr",
 ]);
-const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title"]);
+const RAW_TEXT_CLOSE_PATTERNS = new Map(
+  ["script", "style", "textarea", "title"].map((name) => [
+    name,
+    new RegExp(`</${name}\\b`, "gi"),
+  ]),
+);
 const FIVE_HOURS_SECONDS = 5 * 60 * 60;
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 
@@ -144,9 +160,14 @@ export function normalizeOllamaUsage(html: string):
       refreshedAt: string;
     }
   | undefined {
-  const labels = collectUsageLabels(html);
-  const session = extractUsageWindow(html, labels, "session");
-  const weekly = extractUsageWindow(html, labels, "weekly");
+  const markup = maskRawTextContent(html);
+  const labels = collectUsageLabels(markup);
+  const blocks = enclosingElements(
+    markup,
+    labels.map((label) => label.index),
+  );
+  const session = extractUsageWindow(markup, labels, blocks, "session");
+  const weekly = extractUsageWindow(markup, labels, blocks, "weekly");
   if (!session || !weekly) return undefined;
   return {
     windows: [
@@ -325,6 +346,14 @@ type UsageLabel = {
   index: number;
 };
 
+function maskRawTextContent(html: string): string {
+  return html.replace(
+    /(<(script|style|textarea|title)\b[^>]*>)([\s\S]*?)(<\/\2\s*>)/gi,
+    (_raw, open: string, _name, content: string, close: string) =>
+      `${open}${" ".repeat(content.length)}${close}`,
+  );
+}
+
 function collectUsageLabels(html: string): UsageLabel[] {
   const labelPattern = /<div\b[^>]*aria-label=(["'])([^"']*)\1[^>]*>/gi;
   const labels: UsageLabel[] = [];
@@ -347,13 +376,14 @@ function collectUsageLabels(html: string): UsageLabel[] {
 function extractUsageWindow(
   html: string,
   labels: UsageLabel[],
+  blocks: Map<number, ElementRange[]>,
   name: "session" | "weekly",
 ): { percentUsed: number; resetsAt: string } | undefined {
   const matches = labels.filter((label) => label.name === name);
   if (matches.length !== 1) return undefined;
   const label = matches[0];
   if (!Number.isFinite(label.percentUsed)) return undefined;
-  const resetsAt = extractScopedReset(html, labels, label);
+  const resetsAt = extractScopedReset(html, labels, blocks, label);
   if (!resetsAt) return undefined;
   return { percentUsed: clampPercent(label.percentUsed), resetsAt };
 }
@@ -361,44 +391,44 @@ function extractUsageWindow(
 function extractScopedReset(
   html: string,
   labels: UsageLabel[],
+  blocks: Map<number, ElementRange[]>,
   label: UsageLabel,
 ): string | undefined {
-  const block = findUsageBlock(html, labels, label);
-  if (!block) return undefined;
-  const end = Math.min(block.end, label.index + RESET_SCAN_LIMIT);
-  const slice = html.slice(label.index, end);
-  const match = slice.match(/\bdata-time=(["'])([^"']+)\1/i);
-  return parseIso(decodeHtmlAttribute(match?.[2]));
-}
-
-function findUsageBlock(
-  html: string,
-  labels: UsageLabel[],
-  label: UsageLabel,
-): ElementRange | undefined {
   const otherLabels = labels
     .filter((other) => other.index !== label.index)
     .map((other) => other.index);
-  let block: ElementRange | undefined;
-  for (const range of enclosingElements(html, label.index)) {
-    if (DOCUMENT_LEVEL_ELEMENTS.has(range.name)) break;
+
+  for (const range of blocks.get(label.index) ?? []) {
+    if (BLOCK_BOUNDARY_ELEMENTS.has(range.name)) return undefined;
     if (
       otherLabels.some((other) => other >= range.start && other < range.end)
     ) {
-      break;
+      return undefined;
     }
-    block = range;
+    const end = Math.min(range.end, label.index + RESET_SCAN_LIMIT);
+    if (end <= label.index) continue;
+    const match = html
+      .slice(label.index, end)
+      .match(/\bdata-time=(["'])([^"']+)\1/i);
+    const resetsAt = parseIso(decodeHtmlAttribute(match?.[2]));
+    if (resetsAt) return resetsAt;
   }
-  return block;
+  return undefined;
 }
 
 type ElementRange = { name: string; start: number; end: number };
 
-function enclosingElements(html: string, index: number): ElementRange[] {
+function enclosingElements(
+  html: string,
+  indexes: number[],
+): Map<number, ElementRange[]> {
+  const targets = new Set(indexes);
+  const captured = new Map<
+    number,
+    { name: string; start: number; end?: number }[]
+  >();
   const tagPattern = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)[^>]*?(\/?)>/g;
   const open: { name: string; start: number }[] = [];
-  const enclosing: { name: string; start: number; end?: number }[] = [];
-  let captured = false;
   let match: RegExpExecArray | null;
 
   while ((match = tagPattern.exec(html))) {
@@ -407,18 +437,20 @@ function enclosingElements(html: string, index: number): ElementRange[] {
 
     if (!closing) {
       if (VOID_ELEMENTS.has(name) || selfClosing) continue;
-      if (RAW_TEXT_ELEMENTS.has(name)) {
-        const closeIndex = html
-          .toLowerCase()
-          .indexOf(`</${name}`, tagPattern.lastIndex);
-        if (closeIndex < 0) break;
-        tagPattern.lastIndex = closeIndex;
+      const rawTextClose = RAW_TEXT_CLOSE_PATTERNS.get(name);
+      if (rawTextClose) {
+        rawTextClose.lastIndex = tagPattern.lastIndex;
+        const closeMatch = rawTextClose.exec(html);
+        if (!closeMatch) break;
+        tagPattern.lastIndex = closeMatch.index;
         continue;
       }
       open.push({ name, start: match.index });
-      if (!captured && match.index === index) {
-        enclosing.push(...open.map((entry) => ({ ...entry })));
-        captured = true;
+      if (targets.has(match.index) && !captured.has(match.index)) {
+        captured.set(
+          match.index,
+          open.map((entry) => ({ ...entry })),
+        );
       }
       continue;
     }
@@ -427,18 +459,32 @@ function enclosingElements(html: string, index: number): ElementRange[] {
     if (depth < 0) continue;
     const end = match.index + raw.length;
     for (let i = open.length - 1; i >= depth; i--) {
-      const pending = enclosing.find(
-        (entry) => entry.start === open[i].start && entry.end === undefined,
-      );
-      if (pending) pending.end = end;
+      for (const entries of captured.values()) {
+        const pending = entries.find(
+          (entry) => entry.start === open[i].start && entry.end === undefined,
+        );
+        if (pending) pending.end = end;
+      }
     }
     open.length = depth;
-    if (captured && enclosing.every((entry) => entry.end !== undefined)) break;
+    if (
+      captured.size === targets.size &&
+      [...captured.values()].every((entries) =>
+        entries.every((entry) => entry.end !== undefined),
+      )
+    ) {
+      break;
+    }
   }
 
-  return enclosing
-    .filter((entry): entry is ElementRange => entry.end !== undefined)
-    .reverse();
+  return new Map(
+    [...captured].map(([index, entries]) => [
+      index,
+      entries
+        .filter((entry): entry is ElementRange => entry.end !== undefined)
+        .reverse(),
+    ]),
+  );
 }
 
 function findOpenDepth(
