@@ -3,6 +3,7 @@ import { codexAdapter } from "./codex.js";
 import { copilotAdapter } from "./copilot.js";
 import { cursorAdapter } from "./cursor.js";
 import { grokAdapter } from "./grok.js";
+import { ollamaAdapter } from "./ollama.js";
 import {
   PROVIDER_IDS,
   type ProviderAdapter,
@@ -15,6 +16,7 @@ export const PROVIDERS: Record<ProviderId, ProviderAdapter> = {
   cursor: cursorAdapter,
   copilot: copilotAdapter,
   grok: grokAdapter,
+  ollama: ollamaAdapter,
 };
 
 export function parseProviders(value: string | undefined): ProviderId[] {

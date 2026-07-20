@@ -120,5 +120,6 @@ function providerLabel(provider: ProviderId): string {
   if (provider === "codex") return "Codex";
   if (provider === "cursor") return "Cursor";
   if (provider === "copilot") return "GitHub Copilot";
-  return "Grok";
+  if (provider === "grok") return "Grok";
+  return "Ollama";
 }

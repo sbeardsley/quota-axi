@@ -15,7 +15,8 @@
     "axi",
     "toon",
     "claude",
-    "codex"
+    "codex",
+    "ollama"
   ],
   "bin": {
     "quota-axi": "./dist/bin/quota-axi.js"

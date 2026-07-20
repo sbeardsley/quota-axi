@@ -15,7 +15,7 @@ Quota CLI for agents - designed with [AXI](https://axi.md) (Agent eXperience Int
 Agents need quota state before they choose where work can safely run.
 Vendor dashboards are not shaped for shell automation, and local CLIs expose different windows, resets, and auth sources.
 
-quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, and Grok quota windows in one [AXI](https://axi.md)-shaped call.
+quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, Grok, and Ollama Cloud quota windows in one [AXI](https://axi.md)-shaped call.
 It is data only: it never routes, recommends, proxies, intercepts, logs in, imports browser cookies, or mutates provider state.
 
 - **Official sources** - quota-axi reads local provider auth sources and calls the first-party quota, usage, billing, or entitlement endpoints used by the local agents, with a read-only Codex app-server probe as fallback.
@@ -35,13 +35,14 @@ $ npx -y quota-axi
 bin: ~/.npm/_npx/.../quota-axi
 description: Report local agent-provider quota windows for routing-aware agents
 generatedAt: "2026-03-15T16:42:00.000Z"
-providers[5]{provider,plan,source,status,refreshedAt}:
+providers[6]{provider,plan,source,status,refreshedAt}:
   claude,pro,oauth,fresh,"2026-03-15T16:41:55.000Z"
   codex,plus,cli-rpc,fresh,"2026-03-15T16:41:58.000Z"
   cursor,pro,api,fresh,"2026-03-15T16:41:59.000Z"
   copilot,individual,api,fresh,"2026-03-15T16:42:00.000Z"
   grok,supergrok,api,fresh,"2026-03-15T16:42:00.000Z"
-windows[13]{provider,id,label,percentRemaining,resetsAt,state}:
+  ollama,unknown,web,fresh,"2026-03-15T16:42:00.000Z"
+windows[15]{provider,id,label,percentRemaining,resetsAt,state}:
   claude,five_hour,session,82,"2026-03-15T21:15:00.000Z",fresh
   claude,seven_day,week,64,"2026-03-19T15:00:00.000Z",fresh
   claude,seven_day_opus,opus week,93,"2026-03-20T09:30:00.000Z",fresh
@@ -55,6 +56,8 @@ windows[13]{provider,id,label,percentRemaining,resetsAt,state}:
   copilot,chat,chat,84,"2026-04-01T00:00:00.000Z",fresh
   copilot,premium_interactions,premium interactions,53,"2026-04-01T00:00:00.000Z",fresh
   grok,credits,credits,67,"2026-04-01T00:00:00.000Z",fresh
+  ollama,five_hour,session,66,"2026-03-15T20:30:00.000Z",fresh
+  ollama,weekly,week,33,"2026-03-19T12:00:00.000Z",fresh
 help[3]:
   Run `quota-axi --provider claude --json` for JSON output
   Run `quota-axi --full` to include account and source-attempt details
@@ -204,14 +207,14 @@ It is generated from `src/skill.ts`; update it with `pnpm run build:skill` and v
 
 ### Flags
 
-| Flag                                          | Description                                            |
-| --------------------------------------------- | ------------------------------------------------------ |
-| `--provider claude,codex,cursor,copilot,grok` | Scope providers                                        |
-| `--json`                                      | Emit normalized JSON instead of TOON for quota or auth |
-| `--full`                                      | Include quota account identity and source attempts     |
-| `--allow-keychain-prompt`                     | Permit macOS Claude Keychain access that could prompt  |
-| `-h`, `--help`                                | Print terse [AXI](https://axi.md) help                 |
-| `-v`, `-V`, `--version`                       | Print version                                          |
+| Flag                                                 | Description                                            |
+| ---------------------------------------------------- | ------------------------------------------------------ |
+| `--provider claude,codex,cursor,copilot,grok,ollama` | Scope providers                                        |
+| `--json`                                             | Emit normalized JSON instead of TOON for quota or auth |
+| `--full`                                             | Include quota account identity and source attempts     |
+| `--allow-keychain-prompt`                            | Permit macOS Claude Keychain access that could prompt  |
+| `-h`, `--help`                                       | Print terse [AXI](https://axi.md) help                 |
+| `-v`, `-V`, `--version`                              | Print version                                          |
 
 ## Output Model
 
@@ -258,7 +261,7 @@ Default TOON output includes the same condition in an `advice` block with `provi
 | -------------------------------- | ---------------------------------------------------------------------------- |
 | Provider statuses                | `fresh`, `stale`, `unavailable`, `auth_required`, `rate_limited`, or `error` |
 | Provider sources                 | `oauth`, `cli-rpc`, `api`, `web`, `cache`, or `unavailable`                  |
-| Current provider adapter sources | `oauth`, `cli-rpc`, `api`, `cache`, and `unavailable`                        |
+| Current provider adapter sources | `oauth`, `cli-rpc`, `api`, `web`, `cache`, and `unavailable`                 |
 | Window kinds                     | `session`, `weekly`, `monthly`, `model`, `credits`, or `unknown`             |
 | Source attempt statuses          | `success`, `failed`, or `skipped`                                            |
 
@@ -275,6 +278,7 @@ Source attempts can include `credentialPresent` when a non-secret probe confirms
 | GitHub Copilot           | Can report quota snapshot windows such as `chat`, `completions`, and `premium_interactions`; when the first-party endpoint exposes entitlement but no numeric quota windows, quota-axi reports a fresh provider state with an empty `windows` list rather than inventing percentages.           |
 | Grok                     | Can report `credits`, optional `on_demand`, and optional product-scoped `product:<slug>` windows.                                                                                                                                                                                               |
 | Grok current period only | If Grok's billing response only exposes the current billing period and prepaid balance, quota-axi reports a fresh `credits` window with `resetsAt` and `credits.remaining` but no usage percentage.                                                                                             |
+| Ollama Cloud             | Can report `five_hour` and `weekly` windows from `https://ollama.com/settings` until Ollama ships an official quota API. Missing, partial, changed, or logged-out settings markup is treated as unavailable rather than a zero-usage window.                                                    |
 
 ### `auth --json` shape
 
@@ -286,10 +290,10 @@ Source attempts can include `credentialPresent` when a non-secret probe confirms
 
 Auth source entries can include `credentialPresent` when a non-secret probe confirms a credential item exists.
 
-| Name                 | Values                                                                                       |
-| -------------------- | -------------------------------------------------------------------------------------------- |
-| Auth source statuses | `available`, `missing`, `invalid`, `expired`, or `skipped`                                   |
-| Auth source names    | `oauth-file`, `keychain`, `auth-json`, `auth-env`, `apps-json`, `state-vscdb`, and `cli-rpc` |
+| Name                 | Values                                                                                                      |
+| -------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Auth source statuses | `available`, `missing`, `invalid`, `expired`, or `skipped`                                                  |
+| Auth source names    | `oauth-file`, `keychain`, `auth-json`, `auth-env`, `apps-json`, `state-vscdb`, `cookie-file`, and `cli-rpc` |
 
 ## Security Posture
 
@@ -302,6 +306,7 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 | Cursor         | `$CURSOR_STATE_DB` when set or the platform Cursor state database path                                                                                                                                                                                           |
 | GitHub Copilot | `$GITHUB_COPILOT_APPS_JSON` when set or the local Copilot apps auth file                                                                                                                                                                                         |
 | Grok           | `$GROK_AUTH_JSON`, inline `$GROK_AUTH`, `$GROK_AUTH_PATH`, or `$GROK_HOME/auth.json` / `~/.grok/auth.json`                                                                                                                                                       |
+| Ollama Cloud   | `$OLLAMA_COOKIE_PATH` owner-only cookie file, or inline `$OLLAMA_COOKIE` when no cookie file path is configured; `$OLLAMA_SETTINGS_URL` can override the settings page URL for tests or compatible deployments                                                   |
 
 ### Provider notes
 
@@ -333,6 +338,14 @@ Auth source entries can include `credentialPresent` when a non-secret probe conf
 - It selects session-scoped auth instead of API-key entries and calls Grok's first-party billing endpoint.
 - Session-scoped Grok auth includes web/session scopes and OIDC records scoped to `auth.x.ai` with `auth_mode` or `authMode` set to `oidc`, including scope keys with `::<client id>` suffixes.
 - It may read `$GROK_HOME/version.json` or package metadata near a local `grok` executable to send an `x-grok-client-version` header, but it does not launch the Grok CLI.
+
+**Ollama Cloud**
+
+- It reads `https://ollama.com/settings` with the supplied session cookie until Ollama exposes an official quota API.
+- Prefer `$OLLAMA_COOKIE_PATH` over `$OLLAMA_COOKIE`; on POSIX systems the cookie file must be owner-only, such as mode `0600`.
+- `$OLLAMA_COOKIE` is accepted for container and CI-style environments when `$OLLAMA_COOKIE_PATH` is not set.
+- It never imports browser cookies, logs cookie values, caches raw HTML, or exposes authenticated settings markup.
+- Settings markup is parsed only when both session and weekly usage windows and reset timestamps are present.
 
 ### Safety guarantees
 
