@@ -17,6 +17,7 @@ const originalCodexProvider = PROVIDERS.codex;
 const originalCursorProvider = PROVIDERS.cursor;
 const originalCopilotProvider = PROVIDERS.copilot;
 const originalGrokProvider = PROVIDERS.grok;
+const originalOllamaProvider = PROVIDERS.ollama;
 const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 let tempDir: string | undefined;
 
@@ -26,6 +27,7 @@ afterEach(() => {
   PROVIDERS.cursor = originalCursorProvider;
   PROVIDERS.copilot = originalCopilotProvider;
   PROVIDERS.grok = originalGrokProvider;
+  PROVIDERS.ollama = originalOllamaProvider;
   if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
   else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
   if (tempDir) rmSync(tempDir, { recursive: true, force: true });
@@ -41,16 +43,15 @@ describe("CLI flag parsing", () => {
       "cursor",
       "copilot",
       "grok",
+      "ollama",
     ]);
   });
 
   it("scopes comma-separated providers", () => {
     expect(parseFlags(["--provider", "claude"]).providers).toEqual(["claude"]);
-    expect(parseFlags(["--provider=cursor,copilot,grok"]).providers).toEqual([
-      "cursor",
-      "copilot",
-      "grok",
-    ]);
+    expect(
+      parseFlags(["--provider=cursor,copilot,grok,ollama"]).providers,
+    ).toEqual(["cursor", "copilot", "grok", "ollama"]);
   });
 
   it("ignores a standalone argument separator", () => {
@@ -63,7 +64,7 @@ describe("CLI flag parsing", () => {
   it("collects the boolean flags", () => {
     expect(parseFlags(["--json", "--full", "--allow-keychain-prompt"])).toEqual(
       {
-        providers: ["claude", "codex", "cursor", "copilot", "grok"],
+        providers: ["claude", "codex", "cursor", "copilot", "grok", "ollama"],
         json: true,
         full: true,
         allowKeychainPrompt: true,
@@ -379,6 +380,7 @@ describe("CLI plumbing via the axi SDK", () => {
     PROVIDERS.cursor = providerWithAuth("cursor", "Cursor");
     PROVIDERS.copilot = providerWithAuth("copilot", "GitHub Copilot");
     PROVIDERS.grok = providerWithAuth("grok", "Grok");
+    PROVIDERS.ollama = providerWithAuth("ollama", "Ollama");
 
     const output = await capture(["--allow-keychain-prompt", "auth"]);
     expect(output).toContain(

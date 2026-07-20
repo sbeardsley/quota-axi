@@ -1,11 +1,20 @@
 ---
 name: quota-axi
-description: "Report local Claude, Codex, Cursor, GitHub Copilot, and Grok quota windows via the quota-axi CLI - remaining percentages, reset times, and provider status read from local auth sources, with no routing, recommendation, or provider mutation. Use before deciding whether it is safe to keep spending a provider's quota, when the user asks about usage, rate limits, or remaining quota, or when comparing local provider headroom."
+description: "Report local Claude, Codex, Cursor, GitHub Copilot, Grok, and Ollama Cloud quota windows via the quota-axi CLI - remaining percentages, reset times, and provider status read from local auth sources, with no routing, recommendation, or provider mutation. Use before deciding whether it is safe to keep spending a provider's quota, when the user asks about usage, rate limits, or remaining quota, or when comparing local provider headroom."
 user-invocable: false
 author: Kun Chen (kunchenguid)
 metadata:
   hermes:
-    tags: [quota, rate-limits, claude, codex, cursor, copilot, grok, cli]
+    tags:
+      - quota
+      - rate-limits
+      - claude
+      - codex
+      - cursor
+      - copilot
+      - grok
+      - ollama
+      - cli
     category: observability
 ---
 
@@ -29,7 +38,7 @@ or when comparing supported local provider headroom side by side.
 ## Workflow
 
 1. Run `npx -y quota-axi` for compact TOON output covering supported providers' quota windows.
-2. Scope to one provider with `--provider claude` or to a subset with `--provider cursor,copilot,grok`.
+2. Scope to one provider with `--provider claude` or to a subset with `--provider cursor,copilot,grok,ollama`.
 3. Pass `--json` for the normalized machine-readable model instead of TOON.
 4. Pass `--full` to include account identity and per-source attempt details.
 5. Run `npx -y quota-axi auth` to check local auth-source availability without printing
@@ -50,7 +59,7 @@ usage: quota-axi [auth] [flags]
 commands[2]:
   (none)=quota, auth
 flags[6]:
-  --provider <claude,codex,cursor,copilot,grok>, --json, --full, --allow-keychain-prompt, --help, -v/--version
+  --provider <claude,codex,cursor,copilot,grok,ollama>, --json, --full, --allow-keychain-prompt, --help, -v/--version
 examples:
   quota-axi
   quota-axi --provider claude
