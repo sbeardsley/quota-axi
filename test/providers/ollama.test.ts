@@ -87,6 +87,12 @@ describe("Ollama settings parsing", () => {
   it("does not bind a window to another window's reset timestamp", () => {
     expect(normalizeOllamaUsage(fixture("settings-grid.html"))).toBeUndefined();
   });
+
+  it("does not bind the trailing window to a reset timestamp outside its block", () => {
+    expect(
+      normalizeOllamaUsage(fixture("settings-foreign-reset.html")),
+    ).toBeUndefined();
+  });
 });
 
 describe("Ollama quota provider", () => {

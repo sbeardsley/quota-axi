@@ -23,6 +23,24 @@ const SETTINGS_URL = "https://ollama.com/settings";
 const SETTINGS_USER_AGENT = "quota-axi";
 const SETTINGS_TIMEOUT_MS = 10_000;
 const RESET_SCAN_LIMIT = 4000;
+const DOCUMENT_LEVEL_ELEMENTS = new Set(["html", "body", "main"]);
+const VOID_ELEMENTS = new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "param",
+  "source",
+  "track",
+  "wbr",
+]);
+const RAW_TEXT_ELEMENTS = new Set(["script", "style", "textarea", "title"]);
 const FIVE_HOURS_SECONDS = 5 * 60 * 60;
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 
@@ -345,14 +363,92 @@ function extractScopedReset(
   labels: UsageLabel[],
   label: UsageLabel,
 ): string | undefined {
-  const nextLabel = labels.find((other) => other.index > label.index);
-  const end = Math.min(
-    label.index + RESET_SCAN_LIMIT,
-    nextLabel?.index ?? html.length,
-  );
+  const block = findUsageBlock(html, labels, label);
+  if (!block) return undefined;
+  const end = Math.min(block.end, label.index + RESET_SCAN_LIMIT);
   const slice = html.slice(label.index, end);
   const match = slice.match(/\bdata-time=(["'])([^"']+)\1/i);
   return parseIso(decodeHtmlAttribute(match?.[2]));
+}
+
+function findUsageBlock(
+  html: string,
+  labels: UsageLabel[],
+  label: UsageLabel,
+): ElementRange | undefined {
+  const otherLabels = labels
+    .filter((other) => other.index !== label.index)
+    .map((other) => other.index);
+  let block: ElementRange | undefined;
+  for (const range of enclosingElements(html, label.index)) {
+    if (DOCUMENT_LEVEL_ELEMENTS.has(range.name)) break;
+    if (
+      otherLabels.some((other) => other >= range.start && other < range.end)
+    ) {
+      break;
+    }
+    block = range;
+  }
+  return block;
+}
+
+type ElementRange = { name: string; start: number; end: number };
+
+function enclosingElements(html: string, index: number): ElementRange[] {
+  const tagPattern = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)[^>]*?(\/?)>/g;
+  const open: { name: string; start: number }[] = [];
+  const enclosing: { name: string; start: number; end?: number }[] = [];
+  let captured = false;
+  let match: RegExpExecArray | null;
+
+  while ((match = tagPattern.exec(html))) {
+    const [raw, closing, rawName, selfClosing] = match;
+    const name = rawName.toLowerCase();
+
+    if (!closing) {
+      if (VOID_ELEMENTS.has(name) || selfClosing) continue;
+      if (RAW_TEXT_ELEMENTS.has(name)) {
+        const closeIndex = html
+          .toLowerCase()
+          .indexOf(`</${name}`, tagPattern.lastIndex);
+        if (closeIndex < 0) break;
+        tagPattern.lastIndex = closeIndex;
+        continue;
+      }
+      open.push({ name, start: match.index });
+      if (!captured && match.index === index) {
+        enclosing.push(...open.map((entry) => ({ ...entry })));
+        captured = true;
+      }
+      continue;
+    }
+
+    const depth = findOpenDepth(open, name);
+    if (depth < 0) continue;
+    const end = match.index + raw.length;
+    for (let i = open.length - 1; i >= depth; i--) {
+      const pending = enclosing.find(
+        (entry) => entry.start === open[i].start && entry.end === undefined,
+      );
+      if (pending) pending.end = end;
+    }
+    open.length = depth;
+    if (captured && enclosing.every((entry) => entry.end !== undefined)) break;
+  }
+
+  return enclosing
+    .filter((entry): entry is ElementRange => entry.end !== undefined)
+    .reverse();
+}
+
+function findOpenDepth(
+  open: { name: string; start: number }[],
+  name: string,
+): number {
+  for (let i = open.length - 1; i >= 0; i--) {
+    if (open[i].name === name) return i;
+  }
+  return -1;
 }
 
 function looksLoggedOut(html: string): boolean {
