@@ -19,6 +19,7 @@ quota-axi reports local Claude, Codex, Cursor, GitHub Copilot, Grok, and Ollama 
 It is data only: it never routes, recommends, proxies, intercepts, logs in, imports browser cookies, or mutates provider state.
 
 - **Official sources** - quota-axi reads local provider auth sources and calls the first-party quota, usage, billing, or entitlement endpoints used by the local agents, with a read-only Codex app-server probe as fallback.
+  Ollama Cloud has no quota endpoint yet, so it reads the authenticated first-party `https://ollama.com/settings` page until Ollama ships an official quota API.
 - **Local first** - quota and auth reports run on the machine that holds the credentials; their network calls go to first-party provider endpoints, never a third-party relay.
   The separate `update` command contacts npm only when the user runs it.
 - **Token efficient** - default stdout is compact TOON so agents spend fewer tokens parsing quota state, with `--json` available when a caller needs the normalized model.
